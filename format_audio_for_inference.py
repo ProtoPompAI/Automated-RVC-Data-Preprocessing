@@ -105,7 +105,7 @@ def convert_to_audio_input(in_path, out_path, time_stamp_in=None, time_stamp_out
         get_media_paths(in_path) # Quick check to see if the input directory contains media files   
 
     # Helper functions ===
-    def apply_vocal_removal(input_file, output_file, vocal_remover_version='6.0.0b2', verbose=False):
+    def apply_vocal_removal(input_file, output_file, vocal_remover_version='5.1.0', verbose=False):
         """
         Uses github repository https://github.com/tsurumeso/vocal-remover/ to remove music from vocals.
         Will download the github repository to the NeMo cache directory if not found there.
@@ -148,11 +148,10 @@ def convert_to_audio_input(in_path, out_path, time_stamp_in=None, time_stamp_out
             f"cd {convert_pth(vocal_removal_folder / 'vocal-remover')} && "
             f"\"{sys.executable}\" {convert_pth(vocal_removal_folder / 'vocal-remover/inference.py')} " 
             f"--input {convert_pth(input_file)} --output_dir {convert_pth(output_file.parent)} "
-            # "--postprocess " # Not functional in v6-0-0b2 " +
-            "--tta "
+            #  "--postprocess " # Not functional in v6-0-0b2 
+            # "--tta "
             "--gpu 0 "
-            "--batchsize 8"
-            "--" 
+            # "--batchsize 8"
         )
         get_end_file = lambda path, path_end: path.with_name(path.stem + f'{path_end}')
         get_end_file(input_file, '_Vocals.wav').rename(output_file)
@@ -185,7 +184,8 @@ def convert_to_audio_input(in_path, out_path, time_stamp_in=None, time_stamp_out
         temp_audio_paths = {
             'to_wav': temp_out_folder / (out_path.stem + '_conv_to_wav.wav'),
             'to_mono': temp_out_folder / (out_path.stem + '_conv_to_mono.wav'),
-            'to_removed_music': temp_out_folder / (out_path.stem + '_removed_music.wav')
+            'to_removed_music': temp_out_folder / (out_path.stem + '_removed_music.wav'),
+            'to_mono_2': temp_out_folder / (out_path.stem + '_conv_to_mono_2.wav'),
         }
         out_path = out_path.with_suffix('.wav') # Ensures that a .wav file is the output file
 
@@ -193,7 +193,8 @@ def convert_to_audio_input(in_path, out_path, time_stamp_in=None, time_stamp_out
         convert_to_mono(temp_audio_paths['to_wav'], temp_audio_paths['to_mono'])
         if keep_music==False:
             apply_vocal_removal(temp_audio_paths['to_mono'], temp_audio_paths['to_removed_music'], verbose=verbose)     
-            temp_audio_paths['to_removed_music'].rename(out_path)
+            convert_to_mono(temp_audio_paths['to_removed_music'], temp_audio_paths['to_mono_2'])
+            temp_audio_paths['to_mono_2'].rename(out_path)
         else:
             temp_audio_paths['to_mono'].rename(out_path)
 
@@ -317,7 +318,7 @@ if __name__ == '__main__':
     parser.add_argument('-v', '--verbose'   , action='store_true', help='Display full ffmpeg output on the command line.')
     parser.add_argument('-b', '--break_up_by', default=0, type=int, help='Break the audio up by X minutes. Output_file is converted to an output directory at the same location.')
     parser.add_argument('-k', '--keep_audio_seperated', action='store_true', help='If this option is set, processes audio without combing the outputs or breaking them apart.')
-    parser.add_argument('-m', '--keep_music', action='store_true', help='Option to skip music removal') 
+    parser.add_argument('-m', '--remove_music', action='store_true', help='Option to skip music removal') 
     args = parser.parse_args()
     convert_to_audio_input(
         in_path=args.input_path,
@@ -326,6 +327,6 @@ if __name__ == '__main__':
         time_stamp_out=args.end_time,
         break_up_by=args.break_up_by,
         keep_audio_seperated=args.keep_audio_seperated,
-        keep_music=args.keep_music,
+        keep_music=not args.remove_music,
         verbose=args.verbose
     )

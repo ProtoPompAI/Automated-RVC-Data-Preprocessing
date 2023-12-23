@@ -32,9 +32,7 @@ if __name__ == '__main__':
     format_audio_command += f' -b {args.break_up_by}'
   if args.keep_audio_seperated:
     format_audio_command += ' -k'
-  # format_audio_command += ' -m'
   
-  # print(format_audio_command)
   print('='*5, 'Formating Audio Command', '='*5)
   print(format_audio_command)
   print('='*len('Formating Audio Command') + '='*12)
