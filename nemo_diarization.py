@@ -7,9 +7,13 @@
 # https://github.com/NVIDIA/NeMo/blob/main/examples/speaker_tasks/diarization/clustering_diarizer/offline_diar_with_asr_infer.py
 
 
+
 import json, shutil, subprocess, argparse, gzip, os
 from datetime import timedelta
 from pathlib import Path
+import contextlib
+import logging
+logging.disable(logging.CRITICAL) # Hiding import warnings
 
 from omegaconf import OmegaConf
 import wget
@@ -20,6 +24,43 @@ from nemo.collections.asr.models import ClusteringDiarizer
 from nemo.collections.asr.parts.utils.decoder_timestamps_utils import ASRDecoderTimeStamps
 from nemo.collections.asr.parts.utils.diarization_utils import OfflineDiarWithASR
 from nemo.utils.data_utils import resolve_cache_dir 
+import sys
+from tqdm import tqdm
+
+logging.disable(logging.NOTSET) # Getting logger back
+
+
+
+
+class NoStdStreams(object):
+  """
+  Supresses TQDM output when used as context
+  """
+  # https://github.com/NVIDIA/NeMo/discussions/3281
+  def __init__(self, stdout = None, stderr = None):
+    self.devnull = open(os.devnull,'w')
+    self._stdout = stdout or self.devnull or sys.stdout
+    self._stderr = stderr or self.devnull or sys.stderr
+
+  def __enter__(self):
+    self.old_stdout, self.old_stderr = sys.stdout, sys.stderr
+    self.old_stdout.flush(); self.old_stderr.flush()
+    sys.stdout, sys.stderr = self._stdout, self._stderr
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    self._stdout.flush(); self._stderr.flush()
+    sys.stdout = self.old_stdout
+    sys.stderr = self.old_stderr
+    self.devnull.close() 
+
+
+# Supresses warnings
+# logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
+# logging.getLogger("pytorch").setLevel(logging.ERROR)
+# logging.getLogger("nemo_logger").setLevel(logging.ERROR)
+# loggers = [logging.getLogger(name) for name in logging.root.manager.loggerDict]
+
+# loggers
 
 convert_pth = lambda x: Path(x).absolute().as_posix()
 
@@ -61,9 +102,12 @@ def clip_from_rttm(rttm_path, reference_file, out_folder):
   df_rtm = pd.read_csv(rttm_path)
   df_rtm = df_rtm[df_rtm['Clip_Over_Min_Secs'] == True]
 
+  for folder in out_folder.glob('*'):
+    shutil.rmtree(folder)
+
   for unique_speaker in df_rtm['Speaker'].unique():
-    if os.path.exists(out_folder / unique_speaker):
-      shutil.rmtree(out_folder / unique_speaker)
+    # if os.path.exists(out_folder / unique_speaker):
+    #   shutil.rmtree(out_folder / unique_speaker)
     (out_folder / unique_speaker).mkdir(exist_ok=True)
 
   for _, row in df_rtm.iterrows():
@@ -91,14 +135,16 @@ def generate_whisperx_transcription(audio_file_path, out_file_path, batch_size=8
   ::language:: specified language will be decrease inference time
   """
 
-  # 1. Transcribe with original whisper (batched)  
-  model = whisperx.load_model("large-v2", device, compute_type=compute_type, language=language)
-  audio = whisperx.load_audio(audio_file_path)
-  result = model.transcribe(audio, batch_size=batch_size)
+  # 1. Transcribe with original whisper (batched)
+  with contextlib.redirect_stdout(None):
+    model = whisperx.load_model("large-v2", device, compute_type=compute_type, language=language)
+    audio = whisperx.load_audio(audio_file_path)
+    result = model.transcribe(audio, batch_size=batch_size)
 
   # 2. Align whisper output
-  model_a, metadata = whisperx.load_align_model(language_code=result["language"], device=device)
-  result = whisperx.align(result["segments"], model_a, metadata, audio, device, return_char_alignments=False)
+  with contextlib.redirect_stdout(None):
+    model_a, metadata = whisperx.load_align_model(language_code=result["language"], device=device)
+    result = whisperx.align(result["segments"], model_a, metadata, audio, device, return_char_alignments=False)
   df_s = pd.DataFrame(result["segments"]) \
     [['start', 'end',	'text']] \
     .rename(columns={'start': 'Start', 'end': 'End', 'text': 'Text'})
@@ -155,7 +201,7 @@ def add_transcription_to_diarization(dia_path, trans_path):
 
   df_d.to_csv(dia_path, index=False)
 
-def diarize(input_path, data_dir, domain_type='general', nemo_asr=False, min_sec_cutoff_for_rttm=1):
+def diarize(input_path, data_dir, domain_type='general', nemo_asr=False, min_sec_cutoff_for_rttm=.75):
   """
   Creates a uses a NeMo Diarizer
   ::asr:: -> Uses the NeMO asr functionationaly.
@@ -181,6 +227,7 @@ def diarize(input_path, data_dir, domain_type='general', nemo_asr=False, min_sec
       'num_speakers' : None, 
       'rttm_filepath': None, # You can add a reference file here 
       'uem_filepath' : None,
+      'verbose': False,
     }
     json.dump(meta, fp)
     fp.write('\n')
@@ -195,16 +242,20 @@ def diarize(input_path, data_dir, domain_type='general', nemo_asr=False, min_sec
   cfg.diarizer.speaker_embeddings.model_path = 'titanet_large'
   cfg.diarizer.vad.model_path = 'vad_multilingual_marblenet'
 
-  cfg.diarizer.clustering.parameters.embeddings_per_chunk = 11_000 # Optional parameter to tune
-  cfg.diarizer.clustering.parameters.chunk_cluster_count = 55 # Optional parameter to tune
-  cfg.diarizer.vad.parameters.window_length_in_sec = .8
-  cfg.diarizer.vad.parameters.shift_length_in_sec = .04
-  cfg.diarizer.vad.parameters.pad_onset = .1
-  cfg.diarizer.vad.parameters.pad_offset = -.05
-  cfg.diarizer.speaker_embeddings.parameters.window_length_in_sec = [1.5 ,1.25 ,1.0,0.75 ,0.5 ]
-  cfg.diarizer.speaker_embeddings.parameters.shift_length_in_sec =  [0.75,0.625,0.5,0.375,0.25]
-  cfg.diarizer.speaker_embeddings.parameters.multiscale_weights =   [1   ,1    ,1  ,  1  ,1   ] 
-  cfg.diarizer.speaker_embeddings.parameters.save_embeddings = False
+  cfg.diarizer.clustering.parameters.embeddings_per_chunk = 10_000 # Optional parameter to tune. Default = 10_000
+  cfg.diarizer.clustering.parameters.chunk_cluster_count = 50 # Optional parameter to tune. Default = 50
+  # cfg.diarizer.vad.parameters.window_length_in_sec = .8
+  # cfg.diarizer.vad.parameters.shift_length_in_sec = .04
+  cfg.diarizer.vad.parameters.pad_onset = .25    #  # Adding durations before each speech segment. Default .2
+  cfg.diarizer.vad.parameters.pad_offset = .2 # Adding durations after each speech segment. Default .2
+  cfg.verbose = False
+
+  # cfg.diarizer.speaker_embeddings.parameters.window_length_in_sec = [1.9,1.2,1.0,.75,0.5] # Default [1.9,1.2,0.5]
+  # cfg.diarizer.speaker_embeddings.parameters.shift_length_in_sec =  [0.95,0.6,0.5,0.375,0.25] # Default  [0.95,0.6,0.25]
+  # cfg.diarizer.speaker_embeddings.parameters.multiscale_weights =   [1   ,1    ,.8  ,  .8  ,1   ] 
+  # cfg.diarizer.speaker_embeddings.parameters.save_embeddings = False
+
+
 
   if nemo_asr:
     arpa_model_path = str(resolve_cache_dir() / '4gram_big.arpa')
@@ -225,18 +276,29 @@ def diarize(input_path, data_dir, domain_type='general', nemo_asr=False, min_sec
     asr_diar_offline = OfflineDiarWithASR(cfg.diarizer)
     asr_diar_offline.word_ts_anchor_offset = asr_decoder_ts.word_ts_anchor_offset
   
-    diar_hyp, diar_score = asr_diar_offline.run_diarization(cfg, word_ts_hyp)
+    with contextlib.redirect_stdout(None):
+      diar_hyp, diar_score = asr_diar_offline.run_diarization(cfg, word_ts_hyp)
     trans_info_dict = asr_diar_offline.get_transcript_with_speaker_labels(diar_hyp, word_hyp, word_ts_hyp)
 
     with open(data_dir / 'nemo_transcription_info.json', 'w') as f:
       json.dump(trans_info_dict, f)
 
   else:
-    diarizer_model = ClusteringDiarizer(cfg=cfg)
-    diarizer_model.diarize()
+    # import sys
+    # old_stdout = sys.stdout # backup current stdout
+    # sys.stdout = open(os.devnull, "w")
+    
+    diarizer_model = ClusteringDiarizer(cfg=cfg) # , verbose=False)
+    # with contextlib.redirect_stderr(None):
+    #   with contextlib.redirect_stdout(None):
+    # diarizer_model.verbose = False
+    with NoStdStreams(): 
+      diarizer_model.diarize()
+
+    # sys.stdout = old_stdout # reset old stdout
 
   df_rttm = pd.read_csv(
-    data_dir / f'pred_rttms/{input_file.stem}.rttm',
+    data_dir / f'pred_rttms/{input_path.stem}.rttm',
     delimiter='\s', header=None,
     usecols=[5,8,11], names=['Start','Clip_Length','Speaker'],  
     engine='python'
@@ -245,7 +307,9 @@ def diarize(input_path, data_dir, domain_type='general', nemo_asr=False, min_sec
     .assign(**{
       'End': df_rttm['Start'] + df_rttm['Clip_Length'],
       'Clip_Over_Min_Secs': df_rttm['Clip_Length'] > min_sec_cutoff_for_rttm,
-  })
+      'Start_Formatted': fmt_sec(df_rttm['Start']),
+      'End_Formatted': fmt_sec(df_rttm['Start'] + df_rttm['Clip_Length'])
+    })
   df_rttm.to_csv(data_dir / 'Diarization_Formatted.csv', index=False)
 
 
@@ -279,7 +343,15 @@ if __name__ == '__main__':
   output_directory = Path(args.output_directory)
 
   if input_path.is_dir():
-    for input_file in input_path.glob('*.wav'):
-      diarize_clip_transcribe(input_file, output_directory / input_file.name, args.clip_audio, args.skip_transcription)
+    input_files = list(input_path.glob('*.wav'))
+    progress = tqdm(desc='Diarizing individual files', total=len(input_files))
+
+    for idx in range(len(input_files)):
+      input_file = input_files[idx]
+      diarize_clip_transcribe(
+        input_file, output_directory / input_file.stem,
+        args.clip_audio, args.skip_transcription
+      )
+      progress.update(1)
   else:
     diarize_clip_transcribe(input_path, output_directory, args.clip_audio, args.skip_transcription)
