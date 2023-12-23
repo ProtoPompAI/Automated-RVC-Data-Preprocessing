@@ -14,6 +14,12 @@ from pathlib import Path
 import contextlib
 import logging
 logging.disable(logging.CRITICAL) # Hiding import warnings
+# Supresses warnings
+logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
+logging.getLogger("pytorch").setLevel(logging.ERROR)
+logging.getLogger("nemo_logger").setLevel(logging.ERROR)
+# loggers = [logging.getLogger(name) for name in logging.root.manager.loggerDict]
+
 
 from omegaconf import OmegaConf
 import wget
@@ -28,8 +34,22 @@ import sys
 from tqdm import tqdm
 
 logging.disable(logging.NOTSET) # Getting logger back
+# Supresses warnings
+logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
+logging.getLogger("pytorch").setLevel(logging.ERROR)
+logging.getLogger("nemo_logger").setLevel(logging.ERROR)
 
-
+def fmt_sec(col):
+  def fmt_item(seconds):
+    hours        = int(seconds // (60*60))
+    minutes      = int(seconds % (60*60) // 60)
+    seconds_disp = int(seconds % (60*60) % 60)
+    miliseconds = seconds % 1
+    if miliseconds != 0:
+        return f"{hours:02d}:{minutes:02d}:{seconds_disp:02d}.{str(miliseconds).split('.')[-1]}"
+    else:
+        return f"{hours:02d}:{minutes:02d}:{seconds_disp:02d}"
+  return(col.apply(lambda x: fmt_item(x)))
 
 
 class NoStdStreams(object):
@@ -54,11 +74,7 @@ class NoStdStreams(object):
     self.devnull.close() 
 
 
-# Supresses warnings
-# logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
-# logging.getLogger("pytorch").setLevel(logging.ERROR)
-# logging.getLogger("nemo_logger").setLevel(logging.ERROR)
-# loggers = [logging.getLogger(name) for name in logging.root.manager.loggerDict]
+
 
 # loggers
 
@@ -149,6 +165,22 @@ def generate_whisperx_transcription(audio_file_path, out_file_path, batch_size=8
     [['start', 'end',	'text']] \
     .rename(columns={'start': 'Start', 'end': 'End', 'text': 'Text'})
   df_s.to_csv(out_file_path, index=False)
+  
+  # 3. Creating VAD
+
+  # https://github.com/NVIDIA/NeMo/discussions/6700#discussioncomment-5983801
+  with open(out_file_path.with_suffix('.json'), 'w') as fp:
+    for iloc in range(len(df_s)):
+      row = df_s.iloc[iloc]
+      vad_data = {
+        "audio_filepath": convert_pth(audio_file_path),
+        "offset": row['Start'] - .3,
+        "duration": (row['End'] - row['Start']) + .3,
+        "label": "UNK",
+        "uniq_id": "wtan16"
+      }
+      json.dump(vad_data, fp)
+      fp.write('\n')
 
 def add_transcription_to_diarization(dia_path, trans_path):
   """
@@ -201,7 +233,7 @@ def add_transcription_to_diarization(dia_path, trans_path):
 
   df_d.to_csv(dia_path, index=False)
 
-def diarize(input_path, data_dir, domain_type='general', nemo_asr=False, min_sec_cutoff_for_rttm=.75):
+def diarize(input_path, data_dir, domain_type='general', vad_path=None, nemo_asr=False, min_sec_cutoff_for_rttm=.1):
   """
   Creates a uses a NeMo Diarizer
   ::asr:: -> Uses the NeMO asr functionationaly.
@@ -240,22 +272,23 @@ def diarize(input_path, data_dir, domain_type='general', nemo_asr=False, min_sec
 
   # Parameters that can be adjusted
   cfg.diarizer.speaker_embeddings.model_path = 'titanet_large'
-  cfg.diarizer.vad.model_path = 'vad_multilingual_marblenet'
-
   cfg.diarizer.clustering.parameters.embeddings_per_chunk = 10_000 # Optional parameter to tune. Default = 10_000
   cfg.diarizer.clustering.parameters.chunk_cluster_count = 50 # Optional parameter to tune. Default = 50
-  # cfg.diarizer.vad.parameters.window_length_in_sec = .8
-  # cfg.diarizer.vad.parameters.shift_length_in_sec = .04
-  cfg.diarizer.vad.parameters.pad_onset = .25    #  # Adding durations before each speech segment. Default .2
-  cfg.diarizer.vad.parameters.pad_offset = .2 # Adding durations after each speech segment. Default .2
   cfg.verbose = False
 
+  # Vad
+  if vad_path is None:
+    cfg.diarizer.vad.model_path = 'vad_multilingual_marblenet'
+    cfg.diarizer.vad.parameters.pad_offset = .2 # Adding durations after each speech segment. Default .2
+    cfg.diarizer.vad.parameters.pad_onset = .25    #  # Adding durations before each speech segment. Default .2
+    # cfg.diarizer.vad.parameters.window_length_in_sec = .8
+    # cfg.diarizer.vad.parameters.shift_length_in_sec = .04
+  else:
+    cfg.external_vad_manifest = vad_path
   # cfg.diarizer.speaker_embeddings.parameters.window_length_in_sec = [1.9,1.2,1.0,.75,0.5] # Default [1.9,1.2,0.5]
   # cfg.diarizer.speaker_embeddings.parameters.shift_length_in_sec =  [0.95,0.6,0.5,0.375,0.25] # Default  [0.95,0.6,0.25]
   # cfg.diarizer.speaker_embeddings.parameters.multiscale_weights =   [1   ,1    ,.8  ,  .8  ,1   ] 
   # cfg.diarizer.speaker_embeddings.parameters.save_embeddings = False
-
-
 
   if nemo_asr:
     arpa_model_path = str(resolve_cache_dir() / '4gram_big.arpa')
@@ -313,30 +346,30 @@ def diarize(input_path, data_dir, domain_type='general', nemo_asr=False, min_sec
   df_rttm.to_csv(data_dir / 'Diarization_Formatted.csv', index=False)
 
 
-def diarize_clip_transcribe(input_path, output_directory, clip_audio, skip_transcription):
+def diarize_clip_transcribe(input_path, output_directory, clip_audio):
   output_directory = Path(output_directory)
   output_directory.mkdir(exist_ok=True)
-
+  
   if clip_audio:
     (output_directory / 'diarization'  ).mkdir(exist_ok=True)
     (output_directory / 'clipped_audio').mkdir(exist_ok=True)
     dia_path = output_directory / 'diarization'
   else:
     dia_path = output_directory
+  
+  generate_whisperx_transcription(input_path, dia_path / 'whisperx_transcription.csv')
+  diarize(input_path, dia_path, vad_path=(dia_path / 'whisperx_transcription.json'))
 
-  diarize(input_path, dia_path)
   if clip_audio:
     clip_from_rttm(dia_path / 'Diarization_Formatted.csv', input_path, (output_directory / 'clipped_audio'))
-  if skip_transcription == False:
-    generate_whisperx_transcription(input_path, dia_path / 'whisperx_transcription.csv')
-    add_transcription_to_diarization(dia_path / 'Diarization_Formatted.csv', dia_path / 'whisperx_transcription.csv')
+  # if skip_transcription == False:
+  add_transcription_to_diarization(dia_path / 'Diarization_Formatted.csv', dia_path / 'whisperx_transcription.csv')
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser()
   parser.add_argument('input_path', help='Input path. Needs to a mono .wav file or a directory of mono .wav files')
   parser.add_argument('output_directory', help='Output directory')
   parser.add_argument('-c', '--clip_audio', action='store_true', help='Use generated rttm file to clip audio')
-  parser.add_argument('-s', '--skip_transcription', action='store_true', help='Skip the Whisper transcription process')
   args = parser.parse_args()
   
   input_path = Path(args.input_path)
@@ -348,10 +381,7 @@ if __name__ == '__main__':
 
     for idx in range(len(input_files)):
       input_file = input_files[idx]
-      diarize_clip_transcribe(
-        input_file, output_directory / input_file.stem,
-        args.clip_audio, args.skip_transcription
-      )
+      diarize_clip_transcribe(input_file, output_directory / input_file.stem, args.clip_audio)
       progress.update(1)
   else:
-    diarize_clip_transcribe(input_path, output_directory, args.clip_audio, args.skip_transcription)
+    diarize_clip_transcribe(input_path, output_directory, args.clip_audio)
