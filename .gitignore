@@ -1,0 +1,9 @@
+.vscode
+fmt_and_dia_trial
+temp_audio_dir
+test_input
+tools
+*.wav
+*.csv
+*.log
+unused_scripts
