@@ -14,3 +14,6 @@ Important note
 To make them compact and fast, spaCy’s small pipeline packages (all packages that end in sm) don’t ship with word vectors, and only include context-sensitive tensors. This means you can still use the similarity() methods to compare documents, spans and tokens – but the result won’t be as good, and individual tokens won’t have any vectors assigned. So in order to use real word vectors, you need to download a larger pipeline package:
 - python -m spacy download en_core_web_sm
 + python -m spacy download en_core_web_lg
+
+
+pyyaml

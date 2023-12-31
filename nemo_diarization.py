@@ -6,11 +6,10 @@
 # https://lajavaness.medium.com/deep-dive-into-nemo-how-to-efficiently-tune-a-speaker-diarization-pipeline-d6de291302bf
 # https://github.com/NVIDIA/NeMo/blob/main/examples/speaker_tasks/diarization/clustering_diarizer/offline_diar_with_asr_infer.py
 
-
-
 import json, shutil, subprocess, argparse, gzip, os
 from datetime import timedelta
 from pathlib import Path
+from functools import reduce
 import contextlib
 import logging
 logging.disable(logging.CRITICAL) # Hiding import warnings
@@ -20,8 +19,10 @@ logging.getLogger("pytorch").setLevel(logging.ERROR)
 logging.getLogger("nemo_logger").setLevel(logging.ERROR)
 # loggers = [logging.getLogger(name) for name in logging.root.manager.loggerDict]
 
-
 from omegaconf import OmegaConf
+from omegaconf.dictconfig import DictConfig
+
+from omegaconf.errors import ConfigAttributeError, ConfigKeyError
 import wget
 import pandas as pd
 import whisperx
@@ -39,18 +40,21 @@ logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
 logging.getLogger("pytorch").setLevel(logging.ERROR)
 logging.getLogger("nemo_logger").setLevel(logging.ERROR)
 
-def fmt_sec(col):
+def fmt_sec(col, round_to_zero=False, always_show_hour=True):
   def fmt_item(seconds):
     hours        = int(seconds // (60*60))
     minutes      = int(seconds % (60*60) // 60)
     seconds_disp = int(seconds % (60*60) % 60)
-    miliseconds = seconds % 1
-    if miliseconds != 0:
-        return f"{hours:02d}:{minutes:02d}:{seconds_disp:02d}.{str(miliseconds).split('.')[-1]}"
-    else:
-        return f"{hours:02d}:{minutes:02d}:{seconds_disp:02d}"
-  return(col.apply(lambda x: fmt_item(x)))
+    miliseconds = round(seconds % 1, 2)
 
+    base_fmt = f"{minutes:02d}:{seconds_disp:02d}"
+    if (miliseconds != 0) and (not round_to_zero):
+      base_fmt += str(miliseconds).split('.')[-1]
+    if not (always_show_hour == False and hours == 0):
+      base_fmt = f"{hours:02d}:" + base_fmt
+    return base_fmt
+
+  return(col.apply(lambda x: fmt_item(x)))
 
 class NoStdStreams(object):
   """
@@ -72,11 +76,6 @@ class NoStdStreams(object):
     sys.stdout = self.old_stdout
     sys.stderr = self.old_stderr
     self.devnull.close() 
-
-
-
-
-# loggers
 
 convert_pth = lambda x: Path(x).absolute().as_posix()
 
@@ -130,7 +129,7 @@ def clip_from_rttm(rttm_path, reference_file, out_folder):
     fmt_num = lambda x: str(timedelta(0, round(x))).replace(':','-')
     out_file_name = f"'{fmt_num(row['Start'])}_to_{fmt_num(row['End'])}.wav'"
     subprocess.check_call(
-      f"ffmpeg -ss {row['Start']} -to {row['End']} "
+      f"ffmpeg -ss {row['Start']} -to {row['End'] + .2} "
       f"-i {convert_pth(reference_file)} "
       f"{convert_pth(out_folder / row['Speaker'] / out_file_name)} -y",
       shell=True,
@@ -161,10 +160,37 @@ def generate_whisperx_transcription(audio_file_path, out_file_path, batch_size=8
   with contextlib.redirect_stdout(None):
     model_a, metadata = whisperx.load_align_model(language_code=result["language"], device=device)
     result = whisperx.align(result["segments"], model_a, metadata, audio, device, return_char_alignments=False)
-  df_s = pd.DataFrame(result["segments"]) \
-    [['start', 'end',	'text']] \
-    .rename(columns={'start': 'Start', 'end': 'End', 'text': 'Text'})
+  df_s = pd.DataFrame(result["segments"])
+  df_s = df_s.assign(**{
+      'Start_Formatted': fmt_sec(df_s['start'], round_to_zero=True, always_show_hour=False),
+      'End_Formatted': fmt_sec(df_s['end'],  round_to_zero=True, always_show_hour=False)
+    })  \
+    .rename(columns={'start': 'Start', 'end': 'End', 'text': 'Text'}) \
+    [['Start_Formatted', 'End_Formatted', 'Text', 'Start', 'End']]
   df_s.to_csv(out_file_path, index=False)
+
+  DEBUG = True
+  if DEBUG:
+    temp_test_dir = Path(out_file_path).parents[0] / 'whisper_test'
+    temp_test_dir.mkdir(exist_ok=True)
+
+    reference_file, temp_test_dir = Path(audio_file_path), Path(temp_test_dir)
+    
+    for folder in temp_test_dir.glob('*'):
+      shutil.rmtree(folder)
+
+    for _, row in df_s.iterrows():
+      fmt_num = lambda x: str(timedelta(0, round(x))).replace(':','-')
+      out_file_name = f"'{fmt_num(row['Start'])}_to_{fmt_num(row['End'])}.wav'"
+      subprocess.check_call(
+        f"ffmpeg -ss {row['Start']} -to {row['End'] + .2} "
+        f"-i {convert_pth(reference_file)} "
+        f"{convert_pth(temp_test_dir / out_file_name)} -y",
+        shell=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+      )
+
   
   # 3. Creating VAD
 
@@ -174,10 +200,10 @@ def generate_whisperx_transcription(audio_file_path, out_file_path, batch_size=8
       row = df_s.iloc[iloc]
       vad_data = {
         "audio_filepath": convert_pth(audio_file_path),
-        "offset": row['Start'] - .3,
-        "duration": (row['End'] - row['Start']) + .3,
+        "offset": round(row['Start'], 2),
+        "duration": round(row['End'] - row['Start'], 2),
         "label": "UNK",
-        "uniq_id": "wtan16"
+        "uniq_id": audio_file_path.stem
       }
       json.dump(vad_data, fp)
       fp.write('\n')
@@ -248,6 +274,42 @@ def diarize(input_path, data_dir, domain_type='general', vad_path=None, nemo_asr
   data_dir.mkdir(exist_ok=True)
 
   cfg = OmegaConf.load(get_config(data_dir, domain_type))
+
+  def safe_cfg_assign(key, value):
+    """
+    Function to check to see if a key exists in cfg before assigning.
+    ::key:: Key to assign. Cannot assign over an existing dictionary for safety.
+    ::value:: Value to assign. Cannot be a dictionary for safety.
+    """
+
+    # https://stackoverflow.com/questions/31174295/getattr-and-setattr-on-nested-objects/31174427?noredirect=1#comment86638618_31174427
+    # https://stackoverflow.com/questions/31174295/getattr-and-setattr-on-nested-subobjects-chained-properties
+    def rsetattr(obj, attr, val):
+      pre, _, post = attr.rpartition('.')
+      return setattr(rgetattr(obj, pre) if pre else obj, post, val)
+
+    def rgetattr(obj, attr, *args):
+      def _getattr(obj, attr):
+        return getattr(obj, attr, *args)
+      return reduce(_getattr, [obj] + attr.split('.'))
+    
+    if type(value) in [dict, DictConfig]:
+      raise KeyError(
+        f'Value assigned would be a dictionary. '
+        'Not allowed to assign dictionaries for safety. '
+      )
+      
+    if key not in ['diarizer.manifest_filepath', 'diarizer.out_dir']:
+      existing_val_check = rgetattr(cfg, key) # Check to see if specificed key exists in config
+      if type(existing_val_check) in [dict, DictConfig]:
+        raise KeyError(
+          f'`{key}` is a refers to a dictionary in the config. '
+          'Not allowed to assign over dictionaries for safety. '
+          'Must specify each dictionary key individually.'
+        )
+
+    rsetattr(cfg, key, value)
+
   input_manifest_path = str(convert_pth(data_dir / 'input_manifest.json'))
   with open(input_manifest_path, 'w') as fp:
     meta = {
@@ -264,43 +326,59 @@ def diarize(input_path, data_dir, domain_type='general', vad_path=None, nemo_asr
     json.dump(meta, fp)
     fp.write('\n')
 
-  cfg.diarizer.manifest_filepath = input_manifest_path
-  cfg.diarizer.out_dir = convert_pth(data_dir) # Directory to store intermediate files and prediction outputs
-
-  cfg.sample_rate = 16_000
-  cfg.batch_size = 64 # 64
-
-  # Parameters that can be adjusted
-  cfg.diarizer.speaker_embeddings.model_path = 'titanet_large'
-  cfg.diarizer.clustering.parameters.embeddings_per_chunk = 10_000 # Optional parameter to tune. Default = 10_000
-  cfg.diarizer.clustering.parameters.chunk_cluster_count = 50 # Optional parameter to tune. Default = 50
-  cfg.verbose = False
-
+  cfg_updates_base = {
+    'diarizer.manifest_filepath': input_manifest_path,
+    'diarizer.out_dir': convert_pth(data_dir), # Directory to store intermediate files and prediction outputs
+    'diarizer.speaker_embeddings.model_path': 'titanet_large',
+  }
+  cfg_updates_hyper_param = {
+    'sample_rate': 16_000,
+    'batch_size': 64,
+    
+    'diarizer.clustering.parameters.embeddings_per_chunk': 100_000, # Optional parameter to tune. Default = 10_000
+    'diarizer.clustering.parameters.chunk_cluster_count': 500, # Optional parameter to tune. Default = 50
+    'diarizer.clustering.parameters.sparse_search_volume': 100,  # The higher the number, the more values will be examined with more time. Default = 10
+    
+    "diarizer.speaker_embeddings.parameters.window_length_in_sec": [1.9,1.2,0.5], # Default [1.9,1.2,0.5]
+    "diarizer.speaker_embeddings.parameters.shift_length_in_sec":  [0.95,0.6,0.25], # Default [0.95,0.6,0.25]
+    "diarizer.speaker_embeddings.parameters.multiscale_weights":   [1,1,1], # Default [1,1,1]
+    "diarizer.speaker_embeddings.parameters.save_embeddings": True
+  }
+  
   # Vad
-  if vad_path is None:
-    cfg.diarizer.vad.model_path = 'vad_multilingual_marblenet'
-    cfg.diarizer.vad.parameters.pad_offset = .2 # Adding durations after each speech segment. Default .2
-    cfg.diarizer.vad.parameters.pad_onset = .25    #  # Adding durations before each speech segment. Default .2
-    # cfg.diarizer.vad.parameters.window_length_in_sec = .8
-    # cfg.diarizer.vad.parameters.shift_length_in_sec = .04
-  else:
-    cfg.external_vad_manifest = vad_path
-  # cfg.diarizer.speaker_embeddings.parameters.window_length_in_sec = [1.9,1.2,1.0,.75,0.5] # Default [1.9,1.2,0.5]
-  # cfg.diarizer.speaker_embeddings.parameters.shift_length_in_sec =  [0.95,0.6,0.5,0.375,0.25] # Default  [0.95,0.6,0.25]
-  # cfg.diarizer.speaker_embeddings.parameters.multiscale_weights =   [1   ,1    ,.8  ,  .8  ,1   ] 
-  # cfg.diarizer.speaker_embeddings.parameters.save_embeddings = False
+  if vad_path is None: # 'Using Internal VAD'
+    # print()
+    cfg_updates_hyper_param = {
+      **cfg_updates_hyper_param,
+      'diarizer.vad.model_path': 'vad_multilingual_marblenet',
+      'diarizer.vad.parameters.pad_offset': .2, # Adding durations after each speech segment. Default .2
+      'diarizer.vad.parameters.pad_onset': .25, # Adding durations before each speech segment. Default .2
+      'diarizer.vad.parameters.window_length_in_sec': .63, # Window length in sec for VAD context input. Default .63
+      'diarizer.vad.parameters.shift_length_in_sec': .08 , # Shift length in sec for generate frame level VAD prediction. Default .08 
+    }
+  else: # Using External VAD
+    cfg_updates_hyper_param = {
+      **cfg_updates_hyper_param,
+      'diarizer.vad.model_path': None,
+      'diarizer.vad.external_vad_manifest': str(convert_pth(vad_path)),
+    }
 
   if nemo_asr:
     arpa_model_path = str(resolve_cache_dir() / '4gram_big.arpa')
     if not Path(arpa_model_path).exists():
       dl_arpa_model()
-
-    cfg.diarizer.oracle_vad = False # ----> Not using oracle VAD 
-    cfg.diarizer.asr.parameters.asr_based_vad = False
-    cfg.diarizer.asr.model_path='stt_en_conformer_ctc_large'
-    cfg.diarizer.asr.ctc_decoder_parameters.pretrained_language_model = arpa_model_path
-    cfg.diarizer.asr.realigning_lm_parameters.arpa_language_model = arpa_model_path
-    cfg.diarizer.asr.realigning_lm_parameters.logprob_diff_threshold = 1.2
+    
+    cfg_updates_hyper_param = {
+      **cfg_updates_hyper_param,
+      "diarizer.oracle_vad": False, # ----> Not using oracle VAD 
+      "diarizer.asr.parameters.asr_based_vad": False,
+      "diarizer.asr.model_path": 'stt_en_conformer_ctc_large',
+      "diarizer.asr.ctc_decoder_parameters.pretrained_language_model": arpa_model_path,
+      "diarizer.asr.realigning_lm_parameters.arpa_language_model": arpa_model_path,
+      "diarizer.asr.realigning_lm_parameters.logprob_diff_threshold": 1.2,
+    }
+    for key, item in {**cfg_updates_base, **cfg_updates_hyper_param}.items():
+      safe_cfg_assign(key, item)
 
     asr_decoder_ts = ASRDecoderTimeStamps(cfg.diarizer)
     asr_model = asr_decoder_ts.set_asr_model()
@@ -309,7 +387,7 @@ def diarize(input_path, data_dir, domain_type='general', vad_path=None, nemo_asr
     asr_diar_offline = OfflineDiarWithASR(cfg.diarizer)
     asr_diar_offline.word_ts_anchor_offset = asr_decoder_ts.word_ts_anchor_offset
   
-    with contextlib.redirect_stdout(None):
+    with NoStdStreams():
       diar_hyp, diar_score = asr_diar_offline.run_diarization(cfg, word_ts_hyp)
     trans_info_dict = asr_diar_offline.get_transcript_with_speaker_labels(diar_hyp, word_hyp, word_ts_hyp)
 
@@ -317,18 +395,13 @@ def diarize(input_path, data_dir, domain_type='general', vad_path=None, nemo_asr
       json.dump(trans_info_dict, f)
 
   else:
-    # import sys
-    # old_stdout = sys.stdout # backup current stdout
-    # sys.stdout = open(os.devnull, "w")
+    for key, item in {**cfg_updates_base, **cfg_updates_hyper_param}.items():
+      safe_cfg_assign(key, item)
     
-    diarizer_model = ClusteringDiarizer(cfg=cfg) # , verbose=False)
-    # with contextlib.redirect_stderr(None):
-    #   with contextlib.redirect_stdout(None):
-    # diarizer_model.verbose = False
+    diarizer_model = ClusteringDiarizer(cfg=cfg) # diarizer_model._cfg
+    print(diarizer_model._cfg)
     with NoStdStreams(): 
       diarizer_model.diarize()
-
-    # sys.stdout = old_stdout # reset old stdout
 
   df_rttm = pd.read_csv(
     data_dir / f'pred_rttms/{input_path.stem}.rttm',
@@ -339,12 +412,11 @@ def diarize(input_path, data_dir, domain_type='general', vad_path=None, nemo_asr
   df_rttm = df_rttm \
     .assign(**{
       'End': df_rttm['Start'] + df_rttm['Clip_Length'],
-      'Clip_Over_Min_Secs': df_rttm['Clip_Length'] > min_sec_cutoff_for_rttm,
+      'Clip_Over_Min_Secs': (df_rttm['Clip_Length'] > min_sec_cutoff_for_rttm),
       'Start_Formatted': fmt_sec(df_rttm['Start']),
       'End_Formatted': fmt_sec(df_rttm['Start'] + df_rttm['Clip_Length'])
     })
   df_rttm.to_csv(data_dir / 'Diarization_Formatted.csv', index=False)
-
 
 def diarize_clip_transcribe(input_path, output_directory, clip_audio):
   output_directory = Path(output_directory)
@@ -359,6 +431,8 @@ def diarize_clip_transcribe(input_path, output_directory, clip_audio):
   
   generate_whisperx_transcription(input_path, dia_path / 'whisperx_transcription.csv')
   diarize(input_path, dia_path, vad_path=(dia_path / 'whisperx_transcription.json'))
+
+  # diarize(input_path, dia_path, vad_path=None)
 
   if clip_audio:
     clip_from_rttm(dia_path / 'Diarization_Formatted.csv', input_path, (output_directory / 'clipped_audio'))

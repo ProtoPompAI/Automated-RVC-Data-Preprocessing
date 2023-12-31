@@ -57,7 +57,7 @@ else:
     if resp.lower() not in ['y', 'yes']:
       print('Yes (Y/yes) not detected, exiting.')
       exit()
-  print(f'Changing folder name to {RN_TO}')
+  print(f'Changing folder name `{best_fit_row["Speaker"]}` to `{RN_TO}`')
   Path(INP_SO / best_fit_row['Speaker']).rename(INP_SO / RN_TO) 
   df \
     .assign(**{
