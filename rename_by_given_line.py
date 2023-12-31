@@ -1,6 +1,9 @@
 # https://www.softwareok.com/?page=Windows/10/Quick-Tip/39
 # Enter "extension:*.wav" 
 
+# python nemo_diarization.py fmt_and_dia_trial/audio fmt_and_dia_trial/results -c && python rename_by_given_line.py "fmt_and_dia_trial/results/[bonkai77].Neon.Genesis.Evangelion.Episode.08.[BD.1080p.Dual-Audio.x265.HEVC.10bit]" "You're coming with me." "Asuka" -y
+
+
 # import whisperx
 import gc 
 import pandas as pd

@@ -176,8 +176,11 @@ def generate_whisperx_transcription(audio_file_path, out_file_path, batch_size=8
 
     reference_file, temp_test_dir = Path(audio_file_path), Path(temp_test_dir)
     
-    for folder in temp_test_dir.glob('*'):
-      shutil.rmtree(folder)
+    for path in temp_test_dir.glob('*'):
+      if path.is_dir():
+        shutil.rmtree(path)
+      else:
+        path.unlink()
 
     for _, row in df_s.iterrows():
       fmt_num = lambda x: str(timedelta(0, round(x))).replace(':','-')
@@ -271,6 +274,8 @@ def diarize(input_path, data_dir, domain_type='general', vad_path=None, nemo_asr
     If this value is set small, very small clips will be fed into training models.  
   """ 
 
+  use_external_vad = vad_path is not None
+
   data_dir.mkdir(exist_ok=True)
 
   cfg = OmegaConf.load(get_config(data_dir, domain_type))
@@ -326,6 +331,7 @@ def diarize(input_path, data_dir, domain_type='general', vad_path=None, nemo_asr
     json.dump(meta, fp)
     fp.write('\n')
 
+
   cfg_updates_base = {
     'diarizer.manifest_filepath': input_manifest_path,
     'diarizer.out_dir': convert_pth(data_dir), # Directory to store intermediate files and prediction outputs
@@ -338,16 +344,27 @@ def diarize(input_path, data_dir, domain_type='general', vad_path=None, nemo_asr
     'diarizer.clustering.parameters.embeddings_per_chunk': 100_000, # Optional parameter to tune. Default = 10_000
     'diarizer.clustering.parameters.chunk_cluster_count': 500, # Optional parameter to tune. Default = 50
     'diarizer.clustering.parameters.sparse_search_volume': 100,  # The higher the number, the more values will be examined with more time. Default = 10
-    
+    'diarizer.clustering.parameters.max_num_speakers': 50, # Max number of speakers for each recording. If an oracle number of speakers is passed, this value is ignored. Default = 8
+    'diarizer.clustering.parameters.enhanced_count_thres': 80_000, # If the number of segments is lower than this number, enhanced speaker counting is activated. Default = 80
+    'diarizer.clustering.parameters.enhanced_count_thres': .9, # Determines the range of p-value search: 0 < p <= max_rp_threshold. Default: .25
+
     "diarizer.speaker_embeddings.parameters.window_length_in_sec": [1.9,1.2,0.5], # Default [1.9,1.2,0.5]
     "diarizer.speaker_embeddings.parameters.shift_length_in_sec":  [0.95,0.6,0.25], # Default [0.95,0.6,0.25]
     "diarizer.speaker_embeddings.parameters.multiscale_weights":   [1,1,1], # Default [1,1,1]
-    "diarizer.speaker_embeddings.parameters.save_embeddings": True
+    "diarizer.speaker_embeddings.parameters.save_embeddings": True,
+    
+    # 'diarizer.msdd_model.model_path': 'diar_msdd_telephonic', # Telephonic speaker diarization model 
+    # 'diarizer.msdd_model.parameters.sigmoid_threshold': [0.7, 1.0], # Evaluate with T=0.7 and T=1.0
   }
   
   # Vad
-  if vad_path is None: # 'Using Internal VAD'
-    # print()
+  if use_external_vad:
+    cfg_updates_hyper_param = {
+      **cfg_updates_hyper_param,
+      'diarizer.vad.model_path': None,
+      'diarizer.vad.external_vad_manifest': str(convert_pth(vad_path)),
+    }
+  else: # Using External VAD
     cfg_updates_hyper_param = {
       **cfg_updates_hyper_param,
       'diarizer.vad.model_path': 'vad_multilingual_marblenet',
@@ -355,12 +372,6 @@ def diarize(input_path, data_dir, domain_type='general', vad_path=None, nemo_asr
       'diarizer.vad.parameters.pad_onset': .25, # Adding durations before each speech segment. Default .2
       'diarizer.vad.parameters.window_length_in_sec': .63, # Window length in sec for VAD context input. Default .63
       'diarizer.vad.parameters.shift_length_in_sec': .08 , # Shift length in sec for generate frame level VAD prediction. Default .08 
-    }
-  else: # Using External VAD
-    cfg_updates_hyper_param = {
-      **cfg_updates_hyper_param,
-      'diarizer.vad.model_path': None,
-      'diarizer.vad.external_vad_manifest': str(convert_pth(vad_path)),
     }
 
   if nemo_asr:
@@ -399,7 +410,7 @@ def diarize(input_path, data_dir, domain_type='general', vad_path=None, nemo_asr
       safe_cfg_assign(key, item)
     
     diarizer_model = ClusteringDiarizer(cfg=cfg) # diarizer_model._cfg
-    print(diarizer_model._cfg)
+    # print(diarizer_model._cfg)
     with NoStdStreams(): 
       diarizer_model.diarize()
 
@@ -417,6 +428,7 @@ def diarize(input_path, data_dir, domain_type='general', vad_path=None, nemo_asr
       'End_Formatted': fmt_sec(df_rttm['Start'] + df_rttm['Clip_Length'])
     })
   df_rttm.to_csv(data_dir / 'Diarization_Formatted.csv', index=False)
+  add_transcription_to_diarization(data_dir / 'Diarization_Formatted.csv', data_dir / 'whisperx_transcription.csv')
 
 def diarize_clip_transcribe(input_path, output_directory, clip_audio):
   output_directory = Path(output_directory)
@@ -431,13 +443,9 @@ def diarize_clip_transcribe(input_path, output_directory, clip_audio):
   
   generate_whisperx_transcription(input_path, dia_path / 'whisperx_transcription.csv')
   diarize(input_path, dia_path, vad_path=(dia_path / 'whisperx_transcription.json'))
-
-  # diarize(input_path, dia_path, vad_path=None)
-
   if clip_audio:
     clip_from_rttm(dia_path / 'Diarization_Formatted.csv', input_path, (output_directory / 'clipped_audio'))
-  # if skip_transcription == False:
-  add_transcription_to_diarization(dia_path / 'Diarization_Formatted.csv', dia_path / 'whisperx_transcription.csv')
+  
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser()
