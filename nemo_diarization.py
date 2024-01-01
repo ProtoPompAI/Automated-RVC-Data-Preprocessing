@@ -169,7 +169,7 @@ def generate_whisperx_transcription(audio_file_path, out_file_path, batch_size=8
     [['Start_Formatted', 'End_Formatted', 'Text', 'Start', 'End']]
   df_s.to_csv(out_file_path, index=False)
 
-  DEBUG = True
+  DEBUG = False
   if DEBUG:
     temp_test_dir = Path(out_file_path).parents[0] / 'whisper_test'
     temp_test_dir.mkdir(exist_ok=True)
@@ -331,7 +331,6 @@ def diarize(input_path, data_dir, domain_type='general', vad_path=None, nemo_asr
     json.dump(meta, fp)
     fp.write('\n')
 
-
   cfg_updates_base = {
     'diarizer.manifest_filepath': input_manifest_path,
     'diarizer.out_dir': convert_pth(data_dir), # Directory to store intermediate files and prediction outputs
@@ -346,11 +345,11 @@ def diarize(input_path, data_dir, domain_type='general', vad_path=None, nemo_asr
     'diarizer.clustering.parameters.sparse_search_volume': 100,  # The higher the number, the more values will be examined with more time. Default = 10
     'diarizer.clustering.parameters.max_num_speakers': 50, # Max number of speakers for each recording. If an oracle number of speakers is passed, this value is ignored. Default = 8
     'diarizer.clustering.parameters.enhanced_count_thres': 80_000, # If the number of segments is lower than this number, enhanced speaker counting is activated. Default = 80
-    'diarizer.clustering.parameters.enhanced_count_thres': .9, # Determines the range of p-value search: 0 < p <= max_rp_threshold. Default: .25
+    'diarizer.clustering.parameters.enhanced_count_thres': .1, # Determines the range of p-value search: 0 < p <= max_rp_threshold. Default: .25
 
-    "diarizer.speaker_embeddings.parameters.window_length_in_sec": [1.9,1.2,0.5], # Default [1.9,1.2,0.5]
-    "diarizer.speaker_embeddings.parameters.shift_length_in_sec":  [0.95,0.6,0.25], # Default [0.95,0.6,0.25]
-    "diarizer.speaker_embeddings.parameters.multiscale_weights":   [1,1,1], # Default [1,1,1]
+    "diarizer.speaker_embeddings.parameters.window_length_in_sec": [4,1.9,1.2,0.5,.25], # fault [1.9,1.2,0.5]
+    "diarizer.speaker_embeddings.parameters.shift_length_in_sec":  [1.5,0.95,0.6,0.25,.1], # Default [0.95,0.6,0.25]
+    "diarizer.speaker_embeddings.parameters.multiscale_weights":   [1.3,1.2,1,1,.75], # Default [1,1,1]
     "diarizer.speaker_embeddings.parameters.save_embeddings": True,
     
     # 'diarizer.msdd_model.model_path': 'diar_msdd_telephonic', # Telephonic speaker diarization model 

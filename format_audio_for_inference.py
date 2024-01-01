@@ -148,8 +148,8 @@ def convert_to_audio_input(in_path, out_path, time_stamp_in=None, time_stamp_out
             f"cd {convert_pth(vocal_removal_folder / 'vocal-remover')} && "
             f"\"{sys.executable}\" {convert_pth(vocal_removal_folder / 'vocal-remover/inference.py')} " 
             f"--input {convert_pth(input_file)} --output_dir {convert_pth(output_file.parent)} "
-            #  "--postprocess " # Not functional in v6-0-0b2 
-            # "--tta "
+              "--postprocess " # Not functional in v6-0-0b2 
+             "--tta "
             "--gpu 0 "
             # "--batchsize 8"
         )
@@ -192,6 +192,7 @@ def convert_to_audio_input(in_path, out_path, time_stamp_in=None, time_stamp_out
         convert_to_audio(in_path, temp_audio_paths['to_wav'])
         convert_to_mono(temp_audio_paths['to_wav'], temp_audio_paths['to_mono'])
         if keep_music==False:
+            # print('applyng vocal removal')
             apply_vocal_removal(temp_audio_paths['to_mono'], temp_audio_paths['to_removed_music'], verbose=verbose)     
             convert_to_mono(temp_audio_paths['to_removed_music'], temp_audio_paths['to_mono_2'])
             temp_audio_paths['to_mono_2'].rename(out_path)
@@ -318,7 +319,7 @@ if __name__ == '__main__':
     parser.add_argument('-v', '--verbose'   , action='store_true', help='Display full ffmpeg output on the command line.')
     parser.add_argument('-b', '--break_up_by', default=0, type=int, help='Break the audio up by X minutes. Output_file is converted to an output directory at the same location.')
     parser.add_argument('-k', '--keep_audio_seperated', action='store_true', help='If this option is set, processes audio without combing the outputs or breaking them apart.')
-    parser.add_argument('-m', '--remove_music', action='store_true', help='Option to skip music removal') 
+    parser.add_argument('-m', '--remove_music', action='store_true', help='Option to apply music removal') 
     args = parser.parse_args()
     convert_to_audio_input(
         in_path=args.input_path,
