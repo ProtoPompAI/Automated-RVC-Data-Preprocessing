@@ -6,6 +6,12 @@ tools
 *.wav
 *.csv
 *.log
+*.xlsx
 unused_scripts
 fmt_and_dia_full_anime_trial
 testing_commands.txt
+__pycache__
+*.json
+*.mp3
+Files_to_combine.txt
+temp
