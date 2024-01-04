@@ -8,19 +8,6 @@ from tqdm import tqdm
 import wget
 from nemo.utils.data_utils import resolve_cache_dir 
 
-def get_s_call(verbose):
-    if not verbose:
-        s_call = partial(
-            subprocess.check_call,
-            shell=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-    else:
-        s_call = partial(subprocess.call, shell=True)
-    return s_call
-
-convert_pth = lambda x: f'"{str(Path(x).absolute().as_posix())}"'
    
 def convert_to_audio_input(in_path, out_path, time_stamp_in=None, time_stamp_out=None, break_up_by=0, keep_audio_seperated=False, keep_music=False, verbose=False):
     """
@@ -31,7 +18,6 @@ def convert_to_audio_input(in_path, out_path, time_stamp_in=None, time_stamp_out
     3) keep_audio_seperated set true: Will convert files to a diarization ready audio directory. No timestamp editing / file combining will be perfomed.
     4) time_stamp_in & time_stamp_out set: Will convert file(s) to a diarization ready audio file clipped to a given timestamp
 
-
     ::in_path:: Input path. If it input path is a file, uses a single file.
         If the input path is a directory, will combine the files into a single file.
     ::out_path:: Output path. Must be a .wav file
@@ -41,10 +27,17 @@ def convert_to_audio_input(in_path, out_path, time_stamp_in=None, time_stamp_out
     ::break_up_by:: If set to a non-zero integer, will break up the audio by break_up_by mintues
     ::keep_audio_seperated:: If set to true, will not combine the audio outputs and will keep audio outputs original name in out_path directory.
     ::music_removal:: Bool to optionally use Vocal Remover to remove the music from an audio clip
+        Highest quality vocal removal seems to be only available in the Ultimate Vocal Removal GUI, which 
+        is only available through a seperate graphic inferface. Recommended to do vocal removal there, after
+        audio is clipped and diarizated.
     """
-    
-    # Combining audio inputs if the given path was a directory
+    # Converts a pathlib path to a string
+    convert_pth = lambda x: f'"{str(Path(x).absolute().as_posix())}"'
+
     def get_media_paths(in_path):
+        """
+        Checks for audio paths in a given directory
+        """
         media_paths = []
         for path in Path(in_path).glob('*'):
             if path.is_dir():
@@ -53,13 +46,15 @@ def convert_to_audio_input(in_path, out_path, time_stamp_in=None, time_stamp_out
             if file_type != None:
                 if file_type.split('/')[0] in ['audio', 'video']:
                     media_paths.append(path)
-
         if media_paths == []:
             raise ValueError(f'No media files found in input folder: {in_path}.')
-
         return media_paths
-
-    s_call = get_s_call(verbose)
+    
+    if verbose:
+       s_call = partial(subprocess.call, shell=True)
+    else:
+        s_call = partial(subprocess.check_call, shell=True, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
 
     in_path = Path(in_path)
     out_path = Path(out_path)
@@ -77,7 +72,7 @@ def convert_to_audio_input(in_path, out_path, time_stamp_in=None, time_stamp_out
         raise FileNotFoundError(f'Could not the parent of the output file/directory: {out_path.parent.absolute()}')
 
     type_error_display = lambda x,y: f'Both {x} and {y} have been activated. Please choose one or neither to use.'
-   
+
     if break_up_by_set: # Case 2: break_up_by_set is activated
         if keep_audio_seperated:
             raise ValueError(type_error_display('break_up_by', 'keep_audio_seperated'))
@@ -148,8 +143,8 @@ def convert_to_audio_input(in_path, out_path, time_stamp_in=None, time_stamp_out
             f"cd {convert_pth(vocal_removal_folder / 'vocal-remover')} && "
             f"\"{sys.executable}\" {convert_pth(vocal_removal_folder / 'vocal-remover/inference.py')} " 
             f"--input {convert_pth(input_file)} --output_dir {convert_pth(output_file.parent)} "
-              "--postprocess " # Not functional in v6-0-0b2 
-             "--tta "
+            "--postprocess " # Not functional in v6-0-0b2 
+            "--tta "
             "--gpu 0 "
             # "--batchsize 8"
         )
@@ -247,6 +242,7 @@ def convert_to_audio_input(in_path, out_path, time_stamp_in=None, time_stamp_out
     def clean_temp_outputs(temp_out_dir):
         shutil.rmtree(temp_out_dir)
 
+    # Uses FFMPEG to get the duration of a media file
     def get_clip_len(file_path):
         clip_len = str(subprocess.check_output(
             f'ffmpeg -i {convert_pth(file_path)} 2>&1 | grep "Duration"', shell=True
@@ -268,12 +264,12 @@ def convert_to_audio_input(in_path, out_path, time_stamp_in=None, time_stamp_out
 
     try:
         if keep_audio_seperated: # Simple case of keeping the audio seperated
-            # tqdm(range(len(media_paths)), desc="Converting files to proper audio")
             media_paths = get_media_paths(in_path)
             for idx in tqdm(range(len(media_paths)), desc="Processing input files individually"):
                 convert_file_to_audio_input(media_paths[idx], (out_path / media_paths[idx].name), temp_out_dir)
         else:
-            # Generating a wav temporary file, then deciding what to do with it based on given parameters
+            # Generating a temporary wav file of all audio,
+            # then deciding what to do with it based on given parameters
             temp_out_file = temp_out_dir / 'All_Audio_Combined_Temp.wav'
             if inpath_is_dir:
                 convert_and_combine_wav(in_path, temp_out_file, temp_out_dir)
@@ -284,10 +280,8 @@ def convert_to_audio_input(in_path, out_path, time_stamp_in=None, time_stamp_out
             elif break_up_by_set:
                 clip_len, clip_secs = get_clip_len(temp_out_file)
                 if clip_secs < break_up_by * 60:
-                    raise ValueError(
-                        f'Break up by {break_up_by} minutes is less than the '
-                        f'duration of the clip: ({clip_len.strftime("%H:%M:%S.%f")}).\n'
-                    )
+                    raise ValueError(f'Break up by {break_up_by} minutes is less than the '
+                                     f'duration of the clip: ({clip_len.strftime("%H:%M:%S.%f")}).\n')
                 else:
                     desc = f"Extracting {break_up_by} minute segments"
                     for sec_start in tqdm(range(0, int(clip_secs) + 1, break_up_by * 60), desc=desc):
