@@ -51,7 +51,7 @@ OUT_DIR = Path('grid_search')
 data_file_dir = (OUT_DIR / 'data_files')
 dia_file_dir = (OUT_DIR / 'diarization')
 clip_file_dir = (OUT_DIR / 'clips')
-whisperx_t_path = data_file_dir / 'whisperx_transcription.csv'
+whisperx_t_path = data_file_dir / 'Whisperx_Transcription.csv'
 
 OUT_DIR.mkdir(exist_ok=True)
 data_file_dir.mkdir(exist_ok=True)

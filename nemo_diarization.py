@@ -60,6 +60,7 @@ logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
 logging.getLogger("pytorch").setLevel(logging.ERROR)
 logging.getLogger("nemo_logger").setLevel(logging.ERROR)
 
+
 def fmt_sec(col, round_to_zero=False, always_show_hour=True):
   def fmt_item(seconds):
     hours        = int(seconds // (60*60))
@@ -77,6 +78,20 @@ def fmt_sec(col, round_to_zero=False, always_show_hour=True):
   return(col.apply(lambda x: fmt_item(x)))
 
 convert_pth = lambda x: Path(x).absolute().as_posix()
+
+def clear_temp_directory(dir, exceptions=[]):
+  """
+  Clears a temporary directory, removing both files and folders.
+  """
+  for path in Path(dir).glob('*'):
+    if path.name in exceptions:
+      continue
+    if path.is_dir():
+      shutil.rmtree(path)
+    else:
+      path.unlink()
+
+
 
 def dl_arpa_model():
   def gunzip(file_path,output_path):
@@ -117,11 +132,7 @@ def clip_from_rttm(rttm_path, reference_file, out_folder):
   df_rtm = pd.read_csv(rttm_path)
   df_rtm = df_rtm[df_rtm['Clip_Over_Min_Secs'] == True]
 
-  for folder in out_folder.glob('*'):
-    if folder.is_dir():
-      shutil.rmtree(folder)
-    else:
-      folder.unlink()
+  clear_temp_directory(out_folder)
 
   for unique_speaker in df_rtm['Speaker'].unique():
     # if os.path.exists(out_folder / unique_speaker):
@@ -168,10 +179,12 @@ def generate_whisperx_transcription(audio_file_path, out_file_path, batch_size=8
   df_s = pd.DataFrame(result["segments"])
   df_s = df_s.assign(**{
       'Start_Formatted': fmt_sec(df_s['start'], round_to_zero=True, always_show_hour=False),
-      'End_Formatted': fmt_sec(df_s['end'],  round_to_zero=True, always_show_hour=False)
+      'End_Formatted': fmt_sec(df_s['end'],  round_to_zero=True, always_show_hour=False),
+      'In_Audio_Path': convert_pth(audio_file_path),
+      'File_Name': audio_file_path.stem
     })  \
     .rename(columns={'start': 'Start', 'end': 'End', 'text': 'Text'}) \
-    [['Start_Formatted', 'End_Formatted', 'Text', 'Start', 'End']]
+    [['File_Name', 'Start_Formatted', 'End_Formatted', 'Text', 'Start', 'End', 'In_Audio_Path']]
   df_s.to_csv(out_file_path, index=False)
 
   DEBUG = False
@@ -181,11 +194,7 @@ def generate_whisperx_transcription(audio_file_path, out_file_path, batch_size=8
 
     reference_file, temp_test_dir = Path(audio_file_path), Path(temp_test_dir)
     
-    for path in temp_test_dir.glob('*'):
-      if path.is_dir():
-        shutil.rmtree(path)
-      else:
-        path.unlink()
+    clear_temp_directory(temp_test_dir)
 
     for _, row in df_s.iterrows():
       fmt_num = lambda x: str(timedelta(0, round(x))).replace(':','-')
@@ -429,33 +438,40 @@ def diarize(input_path, data_dir, domain_type='general', vad_path=None, nemo_asr
     usecols=[5,8,11], names=['Start','Clip_Length','Speaker'],  
     engine='python'
   )
+
   df_rttm = df_rttm \
     .assign(**{
       'End': df_rttm['Start'] + df_rttm['Clip_Length'],
       'Clip_Over_Min_Secs': (df_rttm['Clip_Length'] > min_sec_cutoff_for_rttm),
-      'Start_Formatted': fmt_sec(df_rttm['Start']),
-      'End_Formatted': fmt_sec(df_rttm['Start'] + df_rttm['Clip_Length'])
+      'Start_Formatted':  fmt_sec(df_rttm['Start'], round_to_zero=True, always_show_hour=False),
+      'End_Formatted': fmt_sec(df_rttm['Start'] + df_rttm['Clip_Length'],  round_to_zero=True, always_show_hour=False),
+      'In_Audio_Path': convert_pth(input_path),
+      'File_Name': input_path.stem
     })
+  
+  # Adjusting the csv so that the most speak time is set to the lowest speaker number
+  df_grp = df_rttm.groupby(['Speaker'])[['Clip_Length']].sum() \
+    .sort_values('Clip_Length', ascending=False)
+  df_grp['Speaker'] = [f"speaker_{idx}" for idx in range(len(df_grp))]
+  df_rttm['Speaker'] = df_rttm['Speaker'].map(df_grp['Speaker'].to_dict())
+
   df_rttm.to_csv(data_dir / 'Diarization_Formatted.csv', index=False)
   if vad_path is not None:
     add_transcription_to_diarization(data_dir / 'Diarization_Formatted.csv', vad_path.with_suffix('.csv'))
   else:
-    add_transcription_to_diarization(data_dir / 'Diarization_Formatted.csv', data_dir / 'whisperx_transcription.csv')
+    add_transcription_to_diarization(data_dir / 'Diarization_Formatted.csv', data_dir / 'Whisperx_Transcription.csv')
 
-def diarize_clip_transcribe(input_path, output_directory, clip_audio):
+def diarize_clip_transcribe(input_path, output_directory, clip_audio, keep_extra_output):
   output_directory = Path(output_directory)
   output_directory.mkdir(exist_ok=True)
   
   if clip_audio:
     (output_directory / 'diarization'  ).mkdir(exist_ok=True)
     (output_directory / 'clipped_audio').mkdir(exist_ok=True)
-    dia_path = output_directory / 'diarization'
-  else:
-    dia_path = output_directory
-  
-  generate_whisperx_transcription(input_path, dia_path / 'whisperx_transcription.csv')
+    dia_path = output_directory / 'diarization' 
+  generate_whisperx_transcription(input_path, dia_path / 'Whisperx_Transcription.csv')
   diarize(
-    input_path, dia_path, vad_path=(dia_path / 'whisperx_transcription.json'),
+    input_path, dia_path, vad_path=(dia_path / 'Whisperx_Transcription.json'),
     # window_length_in_sec=[2.5,2,1.1,0.7],
     # shift_length_in_sec=[1.1,.8,0.5,0.2],
     # multiscale_weights=[.9,.9,1,1],
@@ -464,15 +480,18 @@ def diarize_clip_transcribe(input_path, output_directory, clip_audio):
     multiscale_weights=None,
     domain_type='meeting'
   )
+
   if clip_audio:
     clip_from_rttm(dia_path / 'Diarization_Formatted.csv', input_path, (output_directory / 'clipped_audio'))
-  
+  if not keep_extra_output:
+    clear_temp_directory(dia_path, ['Diarization_Formatted.csv', 'Whisperx_Transcription.csv'])
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser()
-  parser.add_argument('input_path', help='Input path. Needs to a mono .wav file or a directory of mono .wav files')
-  parser.add_argument('output_directory', help='Output directory')
-  parser.add_argument('-c', '--clip_audio', action='store_true', help='Use generated rttm file to clip audio')
+  parser.add_argument('input_path', help='Input path. Needs to a mono .wav file or a directory of mono .wav files.')
+  parser.add_argument('output_directory', help='Output directory.')
+  parser.add_argument('-c', '--clip_audio', action='store_true', help='Use generated rttm file to clip audio.')
+  parser.add_argument('-k', '--keep_extra_output', action='store_true', help='Keep the additional files generated by NeMo diarization.')
   args = parser.parse_args()
   
   input_path = Path(args.input_path)
@@ -481,10 +500,46 @@ if __name__ == '__main__':
   if input_path.is_dir():
     input_files = list(input_path.glob('*.wav'))
     progress = tqdm(desc='Diarizing individual files', total=len(input_files))
+    df_dia = []
+    df_whisper = []
+    if (not args.keep_extra_output) and args.clip_audio:
+      if not list(output_directory.glob('*')) == []:
+        raise ValueError(f'Specified output directory ({convert_pth(output_directory)}) is not empty.')
+
+      ((output_directory).mkdir(exist_ok=True))
+      (output_directory / 'clipped_audio').mkdir(exist_ok=True)
+      clear_temp_directory(output_directory / 'clipped_audio')
 
     for idx in range(len(input_files)):
       input_file = input_files[idx]
-      diarize_clip_transcribe(input_file, output_directory / input_file.stem, args.clip_audio)
+      out_dir = output_directory / input_file.stem
+      dia_dir = out_dir / 'diarization'
+
+      diarize_clip_transcribe(input_file, out_dir, args.clip_audio, args.keep_extra_output)
       progress.update(1)
+      df_dia.append(pd.read_csv(dia_dir / 'Diarization_Formatted.csv'))
+      df_whisper.append(pd.read_csv(dia_dir / 'Whisperx_Transcription.csv'))
+      if not args.keep_extra_output:
+        shutil.rmtree(dia_dir)
+        if args.clip_audio:
+          (out_dir / 'clipped_audio').rename(output_directory / f'clipped_audio/{input_file.stem}')
+    
+    if (not args.keep_extra_output) and args.clip_audio:
+      clear_temp_directory(output_directory, ['Diarization_Formatted.csv', 'Whisperx_Transcription.csv', 'clipped_audio'])
+
+    col_sort = ['File_Name', 'Speaker', 'Start_Formatted',	'End_Formatted', 'Highest_Likelihood_Line']
+    for df_list, file_path in [(df_dia, 'Diarization_Formatted.csv'), (df_whisper, 'Whisperx_Transcription.csv')]:
+      df_temp = pd.concat(df_list)
+      col_sort = (
+        [c for c in col_sort if c in df_temp.columns] +
+        [c for c in df_temp.columns if c not in col_sort]
+      )
+      df_temp = df_temp[col_sort].copy()
+      if file_path == 'Diarization_Formatted.csv':
+        df_temp = df_temp.sort_values(col_sort[:4])
+      else:
+        df_temp = df_temp.sort_values(['File_Name', 'Start_Formatted',	'End_Formatted'])
+      df_temp.to_csv(output_directory / file_path, index=False)
+
   else:
-    diarize_clip_transcribe(input_path, output_directory, args.clip_audio)
+    diarize_clip_transcribe(input_path, output_directory, args.clip_audio, args.keep_extra_output)

@@ -9,7 +9,6 @@ import gc
 import pandas as pd
 import os
 
-
 # Uses a line to quickly pull a voice out.
 import subprocess, argparse
 from functools import partial
@@ -17,10 +16,8 @@ from pathlib import Path
 import pandas as pd
 import spacy
 
-
 # /home/john/projects/utility/nemo_in_action/rename_by_given_line.py:36: UserWarning: [W008] Evaluating Doc.similarity based on empty vectors.
-
-def rename_by_line(line_to_check_for, rename_folder_to, y, input_path_folder=None, diarization_csv=None, clipped_audio=None):
+def rename_by_line(line_to_check_for, rename_folder_to, y, input_path_folder=None, diarization_csv=None, clipped_audio=None, file_name=None):
   os.environ["SPACY_WARNING_IGNORE"] = "W008" # https://stackoverflow.com/questions/55921104/spacy-similarity-warning-evaluating-doc-similarity-based-on-empty-vectors
   nlp = spacy.load("en_core_web_lg")  # make sure to use larger package!
   if (input_path_folder is None) and (diarization_csv is None or clipped_audio is None):
@@ -35,10 +32,15 @@ def rename_by_line(line_to_check_for, rename_folder_to, y, input_path_folder=Non
   SL = nlp(line_to_check_for)
   RN_TO = rename_folder_to
   df = pd.read_csv(INP_L)
+  if file_name is not None:
+    if file_name not in df['File_Name'].unique():
+      raise ValueError(f'Specifed File Name: {file_name} not found in diarization file.')
+    df = df[df['File_Name']==file_name]
   df = df \
     .assign(**{
       'Similarity_Score': df['Highest_Likelihood_Line'].apply(
-        lambda x: 0 if pd.isna(x) or x.strip() == '' else nlp(x).similarity(SL)
+        lambda x: 0 if pd.isna(x) or x.strip() == ''
+        else nlp(x).similarity(SL)
       )
     }) \
     .reset_index() \
@@ -62,13 +64,21 @@ def rename_by_line(line_to_check_for, rename_folder_to, y, input_path_folder=Non
         exit()
     print(f'Changing folder name `{best_fit_row["Speaker"]}` to `{RN_TO}`')
     Path(INP_SO / best_fit_row['Speaker']).rename(INP_SO / RN_TO) 
-    df \
+
+    df_out = df.copy() \
       .assign(**{
         'Speaker': df['Speaker'].replace(best_fit_row['Speaker'], RN_TO)
       }) \
       .sort_values('index') \
       .drop(columns=['Similarity_Score', 'index']) \
-      .to_csv(INP_L, index=False)
+    
+    if file_name is not None:
+      df_append = pd.read_csv(INP_L)
+      df_append = df_append[df_append['File_Name']!=file_name]
+      df_out = pd.concat([df_out, df_append])
+      df_out = df_out.sort_values(['File_Name', 'Speaker', 'Start_Formatted',	'End_Formatted'])
+
+    df_out.to_csv(INP_L, index=False)
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser()

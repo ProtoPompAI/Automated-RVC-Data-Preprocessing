@@ -21,57 +21,66 @@ import re
 
 MOVE_TO_FOLDER = True
 MOVE_TO_FOLDER_LOC = Path(
-  '/home/john/projects/utility/nemo_in_action/fmt_and_dia_full_anime_trial_asuka'
+  '/home/john/projects/utility/nemo_in_action/fmt_and_dia_full_anime_trial_shinji'
 )
-CHECK_NAME = 'Asuka'
+CHECK_NAME = 'Shinji'
+BASE_FOLDER = Path('fmt_and_dia_full_anime_trial/results_2/')
 
 if __name__ == '__main__':
   if MOVE_TO_FOLDER:
     MOVE_TO_FOLDER_LOC.mkdir(exist_ok=True)
     for path in MOVE_TO_FOLDER_LOC.glob('*'):
       path.unlink()
-  
-  
-  to_check = pd.read_excel('Check_For.xlsx', skiprows=3)
+    
+  to_check = pd.read_excel('Check_For_2.xlsx')
+  to_check = to_check[to_check['Speaker'] == CHECK_NAME]
+  dia_path = BASE_FOLDER / 'Diarization_Formatted.csv'
   
   for idx in range(len(to_check)):
     row = to_check.iloc[idx]
     folder_name = Path(
-      'fmt_and_dia_full_anime_trial/results/['
-      f'bonkai77].Neon.Genesis.Evangelion.Episode.'
+      BASE_FOLDER / 'clipped_audio/'
+      f'[bonkai77].Neon.Genesis.Evangelion.Episode.'
       f'{row["Episode"]:02}.'
       '[BD.1080p.Dual-Audio.x265.HEVC.10bit]/'
     )
     if not folder_name.exists():
       folder_name = Path(
-      'fmt_and_dia_full_anime_trial/results/['
-      f'bonkai77].Neon.Genesis.Evangelion.Episode.'
-      f'{row["Episode"]:02}.DC.'
-      '[BD.1080p.Dual-Audio.x265.HEVC.10bit]/'
+        BASE_FOLDER / 'clipped_audio/'
+        f'[bonkai77].Neon.Genesis.Evangelion.Episode.'
+        f'{row["Episode"]:02}.DC.'
+        '[BD.1080p.Dual-Audio.x265.HEVC.10bit]/'
     )
     if not folder_name.exists():
       raise ValueError(folder_name)
 
     # Renaming named folder if already exists
     # Good for second pass  
-    chk_f = (folder_name / 'clipped_audio')
-    if (chk_f / CHECK_NAME).exists():
-      dia_path = folder_name / 'diarization/Diarization_Formatted.csv'
+    def rename_speaker(row, i):
+      if row['Speaker']==CHECK_NAME and row['File_Name'] == folder_name.name:
+        return f'speaker_{i}'
+      else:
+        return row['Speaker']
+
+    chk_f = (BASE_FOLDER / 'Diarization_Formatted.csv')
+    if (Path(folder_name) / CHECK_NAME).exists():
+      
       for i in range(0, 10_000):
         speaker_check = f'speaker_{i}'
-        if not (chk_f / speaker_check).exists():
-          (chk_f / CHECK_NAME).rename(chk_f / speaker_check)
+        if not (folder_name / speaker_check).exists():
+          (folder_name / CHECK_NAME).rename(folder_name / speaker_check)
           df_t = pd.read_csv(dia_path)
-          df_t['Speaker'].replace(CHECK_NAME, f'speaker_{i}', inplace=True)
+          df_t['Speaker'] = df_t.apply(lambda x: rename_speaker(x, i), axis=1)
           df_t.to_csv(dia_path, index=False)
           break
  
     rename_by_line(
-      row['Asuka Line'], CHECK_NAME, y=True,
-      input_path_folder=str(folder_name.absolute()),
+      row['Line'], CHECK_NAME, y=True,
+      diarization_csv=dia_path, clipped_audio=folder_name,
+      file_name=folder_name.name
     )
 
-    if row['Finalize'] == 'Yes':
-      for path in (chk_f / CHECK_NAME).glob('*.wav'):
+    if row['Finalize'] in ['Yes', True, 'True', 'yes', 'YES']:
+      for path in (folder_name / CHECK_NAME).glob('*.wav'):
         shutil.copy(path, MOVE_TO_FOLDER_LOC / (folder_name.name+'_'+path.name))
 
