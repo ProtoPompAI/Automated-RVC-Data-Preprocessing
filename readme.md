@@ -30,5 +30,5 @@ This is an opensource Python tool to automate RVC data preprocessing.
   * After rigorous testing, it became clear in my experiments that NeMo had consistently better results in diarization tasks. In the same vein, WhisperX had consistently better results in pure transcription tasks. In fact, the VAD is done by WhisperX rather than the default NeMo tools.
 * Are the settings for NeMo and WhisperX changed from default? If so, why?
   * For NeMo, clustering diarizer and the domain_type of meeting are used. All defaults are kept the same, apart from settings to allow NeMo to process longer audio files. These changes in settings have a very large impact on performance, making NeMo diarization use more resources and take longer. However, without these setting changes, NeMo will often only pick up a single speaker in longer audio files.
-    * ![Alt text]('NeMo_updated_settings.png')
+    * ![Alt text](img/NeMo_updated_settings.png)
   * WhisperX settings are kept to defaults.
