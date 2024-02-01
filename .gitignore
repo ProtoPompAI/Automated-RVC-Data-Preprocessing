@@ -5,8 +5,8 @@ __pycache__
 *.log
 *.json
 *.mp3
-Specified_Lines_Private.xlsx
+Specified_Lines_Modified.xlsx
 unused_scripts
 other_data
 trial_outputs
-fmt_and_dia_v2.py
+trial_outputs_v2
