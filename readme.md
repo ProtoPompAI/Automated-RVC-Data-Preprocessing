@@ -1,4 +1,5 @@
-[ProtoPomp, AI for everyone](protopomp.com)
+[ProtoPomp Website](protopomp.com)
+
 [ProtoPomp YouTube](youtube.com/@protopomp)
 
 # Automated RVC Data Processing
@@ -8,7 +9,7 @@ This is an opensource Python tool to automate RVC data preprocessing.
 ## Primary Toolkits used
 
 ## Basic Instructions
-* Git clone the repository
+* Git clone the repository `git clone https://github.com/ProtoPompAI/Automated-RVC-Data-Preprocessing.git`
 * Create a python 3.10 virtual environment i.e.`conda create -n Automated-RVC-Data python=3.10 && conda activate Automated-RVC-Data`
 * Install requirements `pip install -r requirements.txt`
 * Run the program by opening a command window and running the program as such `python preprocess_data.py INPUT_AUDIO_DIRECTORY OUTPUT_LOCATION`
@@ -29,5 +30,5 @@ This is an opensource Python tool to automate RVC data preprocessing.
   * After rigorous testing, it became clear in my experiments that NeMo had consistently better results in diarization tasks. In the same vein, WhisperX had consistently better results in pure transcription tasks. In fact, the VAD is done by WhisperX rather than the default NeMo tools.
 * Are the settings for NeMo and WhisperX changed from default? If so, why?
   * For NeMo, clustering diarizer and the domain_type of meeting are used. All defaults are kept the same, apart from settings to allow NeMo to process longer audio files. These changes in settings have a very large impact on performance, making NeMo diarization use more resources and take longer. However, without these setting changes, NeMo will often only pick up a single speaker in longer audio files.
-    * ![Alt text]('NeMo_updated_settings.png')
+    * ![Alt text](img/NeMo_updated_settings.png)
   * WhisperX settings are kept to defaults.
