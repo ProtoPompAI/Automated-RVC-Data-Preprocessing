@@ -1,35 +1,36 @@
-# Formats audio from a file so it is ready for NeMo processing
+# Extracts audio by wrapping FFMPEG command line functions.
 
-import subprocess, shutil, mimetypes, argparse, re, traceback, zipfile, sys
-from datetime import timedelta, datetime
+import subprocess, shutil, mimetypes, argparse, re, traceback
+from datetime import datetime
 from pathlib import Path
 from functools import partial
 from tqdm import tqdm
-import wget
-from nemo.utils.data_utils import resolve_cache_dir 
 
-   
-def convert_to_audio_input(in_path, out_path, time_stamp_in=None, time_stamp_out=None, break_up_by=0, keep_audio_seperated=False, keep_music=False, verbose=False):
+def convert_to_audio_input(in_path, out_path, time_stamp_in=None, time_stamp_out=None, break_up_by=0, keep_audio_separated=False, verbose=False):
     """
     Preps audio data for inference with FFMPEG.
     4 General Use Cases
-    1) in_path is a file/directory and parameters set to defaults: Will convert file(s) to a diarization ready audio file
-    2) break_up_by set: Will convert file(s) to a diarization ready audio directory. The out files will be clipped by a break_up_by mintues.
-    3) keep_audio_seperated set true: Will convert files to a diarization ready audio directory. No timestamp editing / file combining will be perfomed.
-    4) time_stamp_in & time_stamp_out set: Will convert file(s) to a diarization ready audio file clipped to a given timestamp
+    1) in_path is a file/directory and parameters set to defaults: Will convert file(s) to a
+        diarization ready audio file
+    2) break_up_by set: Will convert file(s) to a diarization ready audio directory.
+        The out files will be clipped by a break_up_by minutes.
+    3) keep_audio_separated set true: Will convert files to a diarization ready audio directory.
+        No timestamp editing / file combining will be performed.
+    4) time_stamp_in & time_stamp_out set: Will convert file(s) to a diarization ready audio file
+        clipped to a given timestamp
 
-    ::in_path:: Input path. If it input path is a file, uses a single file.
+    in_path : Input path. If it input path is a file, uses a single file.
         If the input path is a directory, will combine the files into a single file.
-    ::out_path:: Output path. Must be a .wav file
-    ::time_stamp_in:: ::time_stamp_out:: Can be set to none to convert all of the audio
+    out_path : Output path. Must be a .wav file
+    time_stamp_in : time_stamp_out:: Can be set to none to convert all of the audio
         If these parameters are set, both values must be provided in format of HH:MM:SS 
-    ::verbose:: If set to true, will print the FFMPEG output to console. Can be used to error check.
-    ::break_up_by:: If set to a non-zero integer, will break up the audio by break_up_by mintues
-    ::keep_audio_seperated:: If set to true, will not combine the audio outputs and will keep audio outputs original name in out_path directory.
-    ::music_removal:: Bool to optionally use Vocal Remover to remove the music from an audio clip
+    verbose : If set to true, will print the FFMPEG output to console. Can be used to error check.
+    break_up_by : If set to a non-zero integer, will break up the audio by break_up_by minutes
+    keep_audio_separated : If set to true, will not combine the audio outputs and will keep audio outputs original name in out_path directory.
+    music_removal : Bool to optionally use Vocal Remover to remove the music from an audio clip
         Highest quality vocal removal seems to be only available in the Ultimate Vocal Removal GUI, which 
-        is only available through a seperate graphic inferface. Recommended to do vocal removal there, after
-        audio is clipped and diarizated.
+        is only available through a separate graphic interface. Recommended to do vocal removal there, after
+        audio is clipped and diarized.
     """
     # Converts a pathlib path to a string
     convert_pth = lambda x: f'"{str(Path(x).absolute().as_posix())}"'
@@ -74,19 +75,19 @@ def convert_to_audio_input(in_path, out_path, time_stamp_in=None, time_stamp_out
     type_error_display = lambda x,y: f'Both {x} and {y} have been activated. Please choose one or neither to use.'
 
     if break_up_by_set: # Case 2: break_up_by_set is activated
-        if keep_audio_seperated:
-            raise ValueError(type_error_display('break_up_by', 'keep_audio_seperated'))
+        if keep_audio_separated:
+            raise ValueError(type_error_display('break_up_by', 'keep_audio_separated'))
         elif time_stamp_in_set or time_stamp_out_set:
             raise ValueError(type_error_display('break_up_by', 'time_stamp_in/time_stamp_out.'))
         if not outpath_is_dir:
             raise ValueError('If break_up_by is set, the out_path must be a directory.')
-    elif keep_audio_seperated: # Case 3: keep_audio_seperated is activated
+    elif keep_audio_separated: # Case 3: keep_audio_separated is activated
         if time_stamp_in_set or time_stamp_out_set:
-            raise ValueError(type_error_display('keep_audio_seperated', 'time_stamp_in/time_stamp_out'))
+            raise ValueError(type_error_display('keep_audio_separated', 'time_stamp_in/time_stamp_out'))
         if not inpath_is_dir:
-            raise ValueError('If keep_audio_seperated is set, the in_path must be a directory.')
+            raise ValueError('If keep_audio_separated is set, the in_path must be a directory.')
         if not outpath_is_dir:
-            raise ValueError('If keep_audio_seperated is set, the out_path must be a directory.')
+            raise ValueError('If keep_audio_separated is set, the out_path must be a directory.')
     elif time_stamp_in_set or time_stamp_out_set: # Case 4: time_stamp_in + time_stamp_out are activated
         if (not time_stamp_in_set) or (not time_stamp_out_set):
             raise ValueError('Time_stamp_in and time_stamp_out must either be provided together or not all at.')
@@ -94,63 +95,10 @@ def convert_to_audio_input(in_path, out_path, time_stamp_in=None, time_stamp_out
             raise ValueError('If time_stamp_in/time_stamp_out is set, the out_path must be a .wav file.')
     else: # Case 1: kwargs are kept at defaults
         if not outpath_is_wav:
-            raise ValueError('If either break_up_by_set or keep_audio_seperated are not set, the out_path must be a .wav file.')
+            raise ValueError('If either break_up_by_set or keep_audio_separated are not set, the out_path must be a .wav file.')
         
     if inpath_is_dir:
         get_media_paths(in_path) # Quick check to see if the input directory contains media files   
-
-    # Helper functions ===
-    def apply_vocal_removal(input_file, output_file, vocal_remover_version='5.1.0', verbose=False):
-        """
-        Uses github repository https://github.com/tsurumeso/vocal-remover/ to remove music from vocals.
-        Will download the github repository to the NeMo cache directory if not found there.
-        
-        ::input_file:: input audio file
-        ::output_file:: output audio file
-        ::vocal_remover_version:: verison of the vocal remover
-            if a value that is not found on https://github.com/tsurumeso/vocal-remover/releases/ is used,
-            this function will result in error.
-        """
-
-        def generate_vr_path():
-            path = Path(resolve_cache_dir()) / f'vocal-remover-v{vocal_remover_version}'
-            path = path.with_name(path.name.replace('.','-'))
-            return path
-        
-        def dl_vocal_removal():
-            VOCAL_REMOVER_URL = (
-                f'https://github.com/tsurumeso/vocal-remover/releases/download/'
-                f'v{vocal_remover_version}/vocal-remover-v{vocal_remover_version}.zip'
-            )
-            out_folder = generate_vr_path()
-            zip_file_name = out_folder.with_suffix('.zip')
-            
-            if not out_folder.exists():
-                if not zip_file_name.exists():
-                    f = wget.download(VOCAL_REMOVER_URL, str(zip_file_name.absolute().as_posix()), bar=None)
-                else:
-                    f = str(zip_file_name)
-                with zipfile.ZipFile(f, 'r') as zip_ref:
-                    zip_ref.extractall(out_folder)
-                Path(f).unlink(True)
-        
-        # Applies vocal removal to remove music from audio file
-        vocal_removal_folder = generate_vr_path()
-        if not vocal_removal_folder.exists():
-            dl_vocal_removal()
-
-        s_call(
-            f"cd {convert_pth(vocal_removal_folder / 'vocal-remover')} && "
-            f"\"{sys.executable}\" {convert_pth(vocal_removal_folder / 'vocal-remover/inference.py')} " 
-            f"--input {convert_pth(input_file)} --output_dir {convert_pth(output_file.parent)} "
-            "--postprocess " # Not functional in v6-0-0b2 
-            "--tta "
-            "--gpu 0 "
-            # "--batchsize 8"
-        )
-        get_end_file = lambda path, path_end: path.with_name(path.stem + f'{path_end}')
-        get_end_file(input_file, '_Vocals.wav').rename(output_file)
-        get_end_file(input_file, '_Instruments.wav').unlink()        
 
     # Converting from a format such as a .mp4 to .wav
     def convert_to_audio(in_path, out_path):
@@ -173,9 +121,9 @@ def convert_to_audio_input(in_path, out_path, time_stamp_in=None, time_stamp_out
             f"-c:v copy -c:a copy {convert_pth(out_path)} -y", shell=True
         )
 
-    # Fully converts a sigle file to audio input 
+    # Fully converts a single file to audio input 
     def convert_file_to_audio_input(in_path, out_path, temp_out_folder):
-        # Creating tempory files, FFMPEG may not always work with in place operations
+        # Creating temporary files, FFMPEG may not always work with in place operations
         temp_audio_paths = {
             'to_wav': temp_out_folder / (out_path.stem + '_conv_to_wav.wav'),
             'to_mono': temp_out_folder / (out_path.stem + '_conv_to_mono.wav'),
@@ -186,13 +134,7 @@ def convert_to_audio_input(in_path, out_path, time_stamp_in=None, time_stamp_out
 
         convert_to_audio(in_path, temp_audio_paths['to_wav'])
         convert_to_mono(temp_audio_paths['to_wav'], temp_audio_paths['to_mono'])
-        if keep_music==False:
-            # print('applyng vocal removal')
-            apply_vocal_removal(temp_audio_paths['to_mono'], temp_audio_paths['to_removed_music'], verbose=verbose)     
-            convert_to_mono(temp_audio_paths['to_removed_music'], temp_audio_paths['to_mono_2'])
-            temp_audio_paths['to_mono_2'].rename(out_path)
-        else:
-            temp_audio_paths['to_mono'].rename(out_path)
+        temp_audio_paths['to_mono'].rename(out_path)
 
         for file_path_key in list(temp_audio_paths):
             temp_audio_paths[file_path_key].unlink(True)
@@ -229,10 +171,10 @@ def convert_to_audio_input(in_path, out_path, time_stamp_in=None, time_stamp_out
         hours        = int(seconds // (60*60))
         minutes      = int(seconds % (60*60) // 60)
         seconds_disp = int(seconds % (60*60) % 60)
-        miliseconds = seconds % 1
+        milliseconds = seconds % 1
         if file_name_style == False:
-            if miliseconds != 0:
-                return f"{hours:02d}:{minutes:02d}:{seconds_disp:02d}.{str(miliseconds).split('.')[-1]}"
+            if milliseconds != 0:
+                return f"{hours:02d}:{minutes:02d}:{seconds_disp:02d}.{str(milliseconds).split('.')[-1]}"
             else:
                 return f"{hours:02d}:{minutes:02d}:{seconds_disp:02d}"
         else:
@@ -263,7 +205,7 @@ def convert_to_audio_input(in_path, out_path, time_stamp_in=None, time_stamp_out
         temp_out_dir.mkdir(exist_ok=True)
 
     try:
-        if keep_audio_seperated: # Simple case of keeping the audio seperated
+        if keep_audio_separated: # Simple case of keeping the audio separated
             media_paths = get_media_paths(in_path)
             for idx in tqdm(range(len(media_paths)), desc="Processing input files individually"):
                 convert_file_to_audio_input(media_paths[idx], (out_path / media_paths[idx].name), temp_out_dir)
@@ -303,17 +245,30 @@ def convert_to_audio_input(in_path, out_path, time_stamp_in=None, time_stamp_out
             else:
                 out_path.unlink(True)
         raise ValueError()
-            
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('input_path' , help='Input path')
     parser.add_argument('output_path', help='Output path')
+    parser.add_argument('-v', '--verbose', action='store_true',
+                        help='Display full ffmpeg output on the command line.')
+
+    # Option 1: If no other parameters are specified, will convert the all of the data
+
+    # Option 2: Break the audio up by X minutes
+    parser.add_argument('-b', '--break_up_by', default=0, type=int,
+                        help='Break the audio up by X minutes. '
+                        'Output_file is converted to an output directory at the same location.')
+    
+    # Option 3: Do not combine the audio files, keep separated
+    parser.add_argument('-k', '--keep_audio_separated', action='store_true',
+                        help='If this option is set, processes audio without combing the outputs or '
+                        'breaking them apart.')
+
+    # Option 4: clipping a larger audio
     parser.add_argument('-s', '--start_time', required=False, help='Clip the file from start time.')
     parser.add_argument('-e', '--end_time'  , required=False, help='Clip the file ending at end time.')
-    parser.add_argument('-v', '--verbose'   , action='store_true', help='Display full ffmpeg output on the command line.')
-    parser.add_argument('-b', '--break_up_by', default=0, type=int, help='Break the audio up by X minutes. Output_file is converted to an output directory at the same location.')
-    parser.add_argument('-k', '--keep_audio_seperated', action='store_true', help='If this option is set, processes audio without combing the outputs or breaking them apart.')
-    parser.add_argument('-m', '--remove_music', action='store_true', help='Option to apply music removal') 
+
     args = parser.parse_args()
     convert_to_audio_input(
         in_path=args.input_path,
@@ -321,7 +276,6 @@ if __name__ == '__main__':
         time_stamp_in=args.start_time,
         time_stamp_out=args.end_time,
         break_up_by=args.break_up_by,
-        keep_audio_seperated=args.keep_audio_seperated,
-        keep_music=not args.remove_music,
+        keep_audio_separated=args.keep_audio_separated,
         verbose=args.verbose
     )

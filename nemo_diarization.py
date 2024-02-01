@@ -1,7 +1,7 @@
 import sys
 class NoStdStreams(object):
   """
-  Supresses TQDM output when used as context
+  Suppresses TQDM output when used as context
   """
   # https://github.com/NVIDIA/NeMo/discussions/3281
   def __init__(self, stdout = None, stderr = None):
@@ -20,64 +20,57 @@ class NoStdStreams(object):
     sys.stderr = self.old_stderr
     self.devnull.close() 
 
-
-# Notes for code implementation
-# https://lajavaness.medium.com/comparing-state-of-the-art-speaker-diarization-frameworks-pyannote-vs-nemo-31a191c6300
+# References for code implementation
 # https://github.com/NVIDIA/NeMo/issues/5174
 # https://github.com/NVIDIA/NeMo/pull/7737#issuecomment-1808724046
+# https://github.com/NVIDIA/NeMo/blob/main/examples/speaker_tasks/diarization/clustering_diarizer/offline_diar_with_asr_infer.py
 # https://colab.research.google.com/github/NVIDIA/NeMo/blob/stable/tutorials/speaker_tasks/Speaker_Diarization_Inference.ipynb#scrollTo=CwtVUgVNBR_P
 # https://lajavaness.medium.com/deep-dive-into-nemo-how-to-efficiently-tune-a-speaker-diarization-pipeline-d6de291302bf
-# https://github.com/NVIDIA/NeMo/blob/main/examples/speaker_tasks/diarization/clustering_diarizer/offline_diar_with_asr_infer.py
+# https://lajavaness.medium.com/comparing-state-of-the-art-speaker-diarization-frameworks-pyannote-vs-nemo-31a191c6300
 
-import json, shutil, subprocess, argparse, gzip, os
+import json, shutil, subprocess, argparse, gzip, os, logging, contextlib
 from datetime import timedelta
 from pathlib import Path
 from functools import reduce
-import contextlib
-import logging
-
-
-
+from tqdm import tqdm
+import pandas as pd
+import wget
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 
-from omegaconf.errors import ConfigAttributeError, ConfigKeyError
-import wget
-import pandas as pd
-from tqdm import tqdm
-
-with NoStdStreams():
-  import whisperx
-  from nemo.collections.asr.models import ClusteringDiarizer
-  from nemo.collections.asr.parts.utils.decoder_timestamps_utils import ASRDecoderTimeStamps
-  from nemo.collections.asr.parts.utils.diarization_utils import OfflineDiarWithASR
-  from nemo.utils.data_utils import resolve_cache_dir 
-
-
-
-# Supresses warnings
+# Suppresses warnings
 logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
 logging.getLogger("pytorch").setLevel(logging.ERROR)
 logging.getLogger("nemo_logger").setLevel(logging.ERROR)
+import whisperx
 
+from nemo.collections.asr.models import ClusteringDiarizer
+from nemo.collections.asr.parts.utils.decoder_timestamps_utils import ASRDecoderTimeStamps
+from nemo.collections.asr.parts.utils.diarization_utils import OfflineDiarWithASR
+from nemo.utils.data_utils import resolve_cache_dir 
+
+# Unsuppressed warnings
+# logging.getLogger("pytorch_lightning").setLevel(logging.INFO)
+# logging.getLogger("pytorch").setLevel(logging.INFO)
+# logging.getLogger("nemo_logger").setLevel(logging.INFO)
+
+convert_pth = lambda x: Path(x).absolute().as_posix()
 
 def fmt_sec(col, round_to_zero=False, always_show_hour=True):
   def fmt_item(seconds):
     hours        = int(seconds // (60*60))
     minutes      = int(seconds % (60*60) // 60)
     seconds_disp = int(seconds % (60*60) % 60)
-    miliseconds = round(seconds % 1, 2)
+    milliseconds = round(seconds % 1, 2)
 
     base_fmt = f"{minutes:02d}:{seconds_disp:02d}"
-    if (miliseconds != 0) and (not round_to_zero):
-      base_fmt += str(miliseconds).split('.')[-1]
+    if (milliseconds != 0) and (not round_to_zero):
+      base_fmt += str(milliseconds).split('.')[-1]
     if not (always_show_hour == False and hours == 0):
       base_fmt = f"{hours:02d}:" + base_fmt
     return base_fmt
 
   return(col.apply(lambda x: fmt_item(x)))
-
-convert_pth = lambda x: Path(x).absolute().as_posix()
 
 def clear_temp_directory(dir, exceptions=[]):
   """
@@ -90,8 +83,6 @@ def clear_temp_directory(dir, exceptions=[]):
       shutil.rmtree(path)
     else:
       path.unlink()
-
-
 
 def dl_arpa_model():
   def gunzip(file_path,output_path):
@@ -154,20 +145,23 @@ def clip_from_rttm(rttm_path, reference_file, out_folder):
 def generate_whisperx_transcription(audio_file_path, out_file_path, batch_size=8, compute_type="float16",
                                    device="cuda", language='en'):
   """
+  Uses the whisperX package to generate a transcription
+
   https://github.com/m-bain/whisperX#python-usage--
 
-  ::audio_file_path:: path to audio file
-  ::out_file_path:: path to output path
-  ::batch_size:: batch size, reduce if low on GPU mem
-  ::compute_type:: compute type, change to "int8" if low on GPU mem (may reduce accuracy)
-  ::device:: device for inference, GPU significantly decreases inference time
-  ::language:: specified language will be decrease inference time
+  audio_file_path : path to audio file
+  out_file_path : path to output path
+  batch_size : batch size, reduce if low on GPU mem
+  compute_type : compute type, change to "int8" if low on GPU mem (may reduce accuracy)
+  device : device for inference, GPU significantly decreases inference time
+  language : specified language will be decrease inference time
   """
   audio_file_path = Path(audio_file_path)
   out_file_path = Path(out_file_path)
 
   # 1. Transcribe with original whisper (batched)
   with contextlib.redirect_stdout(None):
+    # with NoStdStreams():
     model = whisperx.load_model("large-v2", device, compute_type=compute_type, language=language)
     audio = whisperx.load_audio(audio_file_path)
     result = model.transcribe(audio, batch_size=batch_size)
@@ -181,7 +175,7 @@ def generate_whisperx_transcription(audio_file_path, out_file_path, batch_size=8
       'Start_Formatted': fmt_sec(df_s['start'], round_to_zero=True, always_show_hour=False),
       'End_Formatted': fmt_sec(df_s['end'],  round_to_zero=True, always_show_hour=False),
       'In_Audio_Path': convert_pth(audio_file_path),
-      'File_Name': audio_file_path.stem
+      'File_Name': str(audio_file_path.stem)
     })  \
     .rename(columns={'start': 'Start', 'end': 'End', 'text': 'Text'}) \
     [['File_Name', 'Start_Formatted', 'End_Formatted', 'Text', 'Start', 'End', 'In_Audio_Path']]
@@ -321,7 +315,7 @@ def diarize(input_path, data_dir, domain_type='general', vad_path=None, nemo_asr
       )
       
     if key not in ['diarizer.manifest_filepath', 'diarizer.out_dir']:
-      existing_val_check = rgetattr(cfg, key) # Check to see if specificed key exists in config
+      existing_val_check = rgetattr(cfg, key) # Check to see if specified key exists in config
       if type(existing_val_check) in [dict, DictConfig]:
         raise KeyError(
           f'`{key}` is a refers to a dictionary in the config. '
@@ -352,19 +346,18 @@ def diarize(input_path, data_dir, domain_type='general', vad_path=None, nemo_asr
     'diarizer.out_dir': convert_pth(data_dir), # Directory to store intermediate files and prediction outputs
     'diarizer.speaker_embeddings.model_path': 'titanet_large',
   }
+  # Example
+  # https://github.com/NVIDIA/NeMo/blob/main/examples/speaker_tasks/diarization/conf/inference/diar_infer_meeting.yaml
   cfg_updates_hyper_param = {
-    'sample_rate': 16_000,
+    'sample_rate': 16_000, 
     'batch_size': 64,
-    
     'diarizer.clustering.parameters.embeddings_per_chunk': 100_000, # Optional parameter to tune. Default = 10_000
     'diarizer.clustering.parameters.chunk_cluster_count': 500, # Optional parameter to tune. Default = 50
     'diarizer.clustering.parameters.sparse_search_volume': 100,  # The higher the number, the more values will be examined with more time. Default = 10
     'diarizer.clustering.parameters.max_num_speakers': 50, # Max number of speakers for each recording. If an oracle number of speakers is passed, this value is ignored. Default = 8
     'diarizer.clustering.parameters.enhanced_count_thres': 80_000, # If the number of segments is lower than this number, enhanced speaker counting is activated. Default = 80
     'diarizer.clustering.parameters.enhanced_count_thres': .25, # Determines the range of p-value search: 0 < p <= max_rp_threshold. Default: .25
-
     "diarizer.speaker_embeddings.parameters.save_embeddings": False,
-    
     # 'diarizer.msdd_model.model_path': 'diar_msdd_telephonic', # Telephonic speaker diarization model 
     # 'diarizer.msdd_model.parameters.sigmoid_threshold': [0.7, 1.0], # Evaluate with T=0.7 and T=1.0
   }
@@ -428,8 +421,8 @@ def diarize(input_path, data_dir, domain_type='general', vad_path=None, nemo_asr
       safe_cfg_assign(key, item)
     
     diarizer_model = ClusteringDiarizer(cfg=cfg) # diarizer_model._cfg
-    # print(diarizer_model._cfg)
     with NoStdStreams(): 
+      # print(diarizer_model._cfg)
       diarizer_model.diarize()
 
   df_rttm = pd.read_csv(
@@ -472,12 +465,9 @@ def diarize_clip_transcribe(input_path, output_directory, clip_audio, keep_extra
   generate_whisperx_transcription(input_path, dia_path / 'Whisperx_Transcription.csv')
   diarize(
     input_path, dia_path, vad_path=(dia_path / 'Whisperx_Transcription.json'),
-    # window_length_in_sec=[2.5,2,1.1,0.7],
-    # shift_length_in_sec=[1.1,.8,0.5,0.2],
-    # multiscale_weights=[.9,.9,1,1],
-    window_length_in_sec=None,
-    shift_length_in_sec=None,
-    multiscale_weights=None,
+    window_length_in_sec=None, # [2.5,2,1.1,0.7],
+    shift_length_in_sec=None, # [1.1,.8,0.5,0.2],
+    multiscale_weights=None, # [.9,.9,1,1],
     domain_type='meeting'
   )
 
@@ -493,7 +483,7 @@ if __name__ == '__main__':
   parser.add_argument('-c', '--clip_audio', action='store_true', help='Use generated rttm file to clip audio.')
   parser.add_argument('-k', '--keep_extra_output', action='store_true', help='Keep the additional files generated by NeMo diarization.')
   args = parser.parse_args()
-  
+
   input_path = Path(args.input_path)
   output_directory = Path(args.output_directory)
 
@@ -504,9 +494,10 @@ if __name__ == '__main__':
     df_whisper = []
     if (not args.keep_extra_output) and args.clip_audio:
       if not list(output_directory.glob('*')) == []:
-        raise ValueError(f'Specified output directory ({convert_pth(output_directory)}) is not empty.')
+        # raise ValueError(f'Specified output directory ({convert_pth(output_directory)}) is not empty.')
+        shutil.rmtree(output_directory)
 
-      ((output_directory).mkdir(exist_ok=True))
+      (output_directory).mkdir(exist_ok=True)
       (output_directory / 'clipped_audio').mkdir(exist_ok=True)
       clear_temp_directory(output_directory / 'clipped_audio')
 
@@ -523,7 +514,7 @@ if __name__ == '__main__':
         shutil.rmtree(dia_dir)
         if args.clip_audio:
           (out_dir / 'clipped_audio').rename(output_directory / f'clipped_audio/{input_file.stem}')
-    
+
     if (not args.keep_extra_output) and args.clip_audio:
       clear_temp_directory(output_directory, ['Diarization_Formatted.csv', 'Whisperx_Transcription.csv', 'clipped_audio'])
 
