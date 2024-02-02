@@ -107,6 +107,6 @@ if __name__ == '__main__':
   if (args.specification_file is not None) and (args.speaker_label is not None):
     print('='*5, f'Extracting speaker: {args.speaker_label}', '='*5)
     call_child_script(rename_speaker_command)
-    print('='*5, len(f'Extracting speaker: {args.speaker_label}'), '='*5, sep='=')
+    print('='*5, len(f'Extracting speaker: {args.speaker_label}') * '=', '='*5, sep='=')
   else:
      print('Skipping speaker clip extraction, specify -sf and -sl to extract speaker.')
