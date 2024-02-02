@@ -265,7 +265,7 @@ if __name__ == '__main__':
                         help='If this option is set, processes audio without combing the outputs or '
                         'breaking them apart.')
 
-    # Option 4: clipping a larger audio
+    # Option 4: Clipping a larger audio
     parser.add_argument('-s', '--start_time', required=False, help='Clip the file from start time.')
     parser.add_argument('-e', '--end_time'  , required=False, help='Clip the file ending at end time.')
 
