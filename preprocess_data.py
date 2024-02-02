@@ -55,7 +55,11 @@ if __name__ == '__main__':
   Path(args.output_path).mkdir(exist_ok=True)
   format_audio_output_path = Path(args.output_path) / "formatted_audio"
   diarization_output_path = Path(args.output_path) / "diarization"
-  speaker_clip_output_path = Path(args.output_path) / args.speaker_label
+  if args.speaker_label is not None:
+    speaker_clip_output_path = Path(args.output_path) / args.speaker_label
+  else:
+    speaker_clip_output_path = None
+
 
   format_audio_command = [
     sys.executable,
