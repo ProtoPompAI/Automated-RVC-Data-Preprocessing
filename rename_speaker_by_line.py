@@ -1,8 +1,104 @@
-import shutil, os, subprocess, argparse
+import shutil, os, subprocess, argparse, mimetypes, re
+from datetime import datetime
+from functools import partial
 from pathlib import Path
 import spacy
 import pandas as pd
 
+convert_pth = lambda x: f'"{str(Path(x).absolute().as_posix())}"'
+s_call = partial(subprocess.check_call, shell=True, stdout=subprocess.DEVNULL,
+                 stderr=subprocess.DEVNULL)
+
+def split_by_min(out_folder, split_minutes=5):
+
+  # Function that is called to cut the audio by timestamps if required
+  def cut_to_timestamp(start_time, end_time, in_path, out_path):
+    s_call(
+      f"ffmpeg -i {convert_pth(in_path)} -ss {start_time} -to {end_time} "
+      f"-c:v copy -c:a copy {convert_pth(out_path)} -y", shell=True
+    )
+
+  # Convert python timestamp to seconds
+  def conv_to_sec(x):
+    return (x.hour * 60 * 60) + (x.minute * 60) + x.second + float(f".{x.microsecond}")
+
+  # Uses FFMPEG to get the duration of a media file
+  def get_clip_len(file_path):
+    clip_len = str(subprocess.check_output(
+      f'ffmpeg -i {convert_pth(file_path)} 2>&1 | grep "Duration"', shell=True
+    ))
+    clip_len = re.search(r'Duration: ([0-9:\.]*),', clip_len).group(1)
+    clip_len = datetime.strptime(clip_len, '%H:%M:%S.%f')
+    clip_secs = conv_to_sec(clip_len)
+    return clip_len, clip_secs
+
+  def fmt_sec(seconds, file_name_style=False):
+    hours        = int(seconds // (60*60))
+    minutes      = int(seconds % (60*60) // 60)
+    seconds_disp = int(seconds % (60*60) % 60)
+    milliseconds = seconds % 1
+    if file_name_style == False:
+      if milliseconds != 0:
+        return f"{hours:02d}:{minutes:02d}:{seconds_disp:02d}.{str(milliseconds).split('.')[-1]}"
+      else:
+        return f"{hours:02d}:{minutes:02d}:{seconds_disp:02d}"
+    else:
+      return f"{hours:02d}-{minutes:02d}"
+
+  in_audio_file = list(out_folder.glob('*'))[0]
+
+  clip_len, clip_secs = get_clip_len(in_audio_file)
+  for sec_start in range(0, int(clip_secs) + 1, split_minutes * 60):
+    sec_end = min(sec_start + split_minutes * 60, clip_secs)
+    cut_to_timestamp(
+      fmt_sec(sec_start), fmt_sec(sec_end), in_audio_file,
+      in_audio_file.parent / (f"{fmt_sec(sec_start, True)}_to_" +
+                  f"{fmt_sec(sec_end, True)}.wav")
+    )
+  
+  in_audio_file.unlink()
+
+
+def combine_wav(out_folder):
+    def get_media_paths(in_path):
+      """
+      Checks for audio paths in a given directory
+      """
+      media_paths = []
+      for path in Path(in_path).glob('*'):
+        if path.is_dir():
+          continue
+        file_type = mimetypes.guess_type(path)[0]
+        if file_type != None:
+          if file_type.split('/')[0] in ['audio', 'video']:
+            media_paths.append(path)
+      if media_paths == []:
+        raise ValueError(f'No media files found in input folder: {in_path}.')
+      return media_paths
+
+    media_paths = get_media_paths(out_folder)
+
+    # Making a file with all of the audio files for ffmpeg 
+    with open(out_folder / 'Files_to_combine.txt', 'w') as text_file:
+      for wav_file in media_paths:
+        wav_file = str(convert_pth(wav_file))
+        wav_file = wav_file.replace('"',"'")
+        text_file.write(f"file {wav_file}")
+        text_file.write('\n')
+
+    # Using FFMPEG to combine all of the wav files
+    s_call(
+      f"ffmpeg -f concat -safe 0 -i "
+      f"{convert_pth(out_folder / 'Files_to_combine.txt')} " 
+      f"-c copy {convert_pth(out_folder / 'audio.wav')} -y"
+    )
+
+    for path in out_folder.glob('*'):
+      if path == out_folder / 'audio.wav':
+        continue
+      if not path.is_dir():
+        path.unlink()
+    
 def load_diarization():
   """
   Loads diarization in csv format
@@ -42,7 +138,7 @@ def reset_speaker_name(folder_name, check_name, dia_path):
       return
   raise ValueError()
 
-def rename_by_line(line_to_check_for, rename_folder_to,
+def rename_by_line(spec_series, rename_folder_to,
                    diarization_csv, clipped_audio, file_name, skip_user_verification=False):
   """
   Renames the speaker by a specified line.
@@ -50,6 +146,7 @@ def rename_by_line(line_to_check_for, rename_folder_to,
   """
   # https://stackoverflow.com/questions/55921104/spacy-similarity-warning-evaluating-doc-similarity-based-on-empty-vectors
   os.environ["SPACY_WARNING_IGNORE"] = "W008"
+  line_to_check_for = spec_series['Line']
   try:
     nlp = spacy.load("en_core_web_lg")
   except OSError:
@@ -74,7 +171,8 @@ def rename_by_line(line_to_check_for, rename_folder_to,
     .sort_values('Similarity_Score', ascending=False)
 
   if len(df['Speaker'].unique()) == 1:
-    print(f'Warning, only a single speaker found.')
+    if str(spec_series['Finalize']).lower() in ['yes', 'true']:
+      print(f'Warning, only a single speaker found for folder: `{clipped_audio.name}`.')
 
   if len(df[df['Similarity_Score'] >= .75]) == 0:
     print(
@@ -139,7 +237,7 @@ def rename_from_spec_file(base_folder, check_name, spec_file, move_results_to_fo
       reset_speaker_name(folder_name, check_name, dia_path)
     
     rename_by_line(
-      row['Line'], check_name, diarization_csv=dia_path,
+      row, check_name, diarization_csv=dia_path,
       clipped_audio=folder_name, file_name=folder_name.name, skip_user_verification=True
     )
 
@@ -159,9 +257,11 @@ if __name__ == '__main__':
   input_diarization_directory = Path(args.input_diarization_directory)
   specification_file = Path(args.specification_file)
   speaker_name = args.speaker_name
-  results_directory = Path(args.results_directory) 
+  results_directory = Path(args.results_directory)
   results_directory.mkdir(exist_ok=True)
   for path in results_directory.glob('*'):
     path.unlink()
 
   rename_from_spec_file(input_diarization_directory, speaker_name, specification_file, results_directory)
+  combine_wav(results_directory)
+  split_by_min(results_directory)
