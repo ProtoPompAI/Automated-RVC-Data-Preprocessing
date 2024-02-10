@@ -58,7 +58,6 @@ def split_by_min(out_folder, split_minutes=5):
   
   in_audio_file.unlink()
 
-
 def combine_wav(out_folder):
     def get_media_paths(in_path):
       """
@@ -252,6 +251,7 @@ if __name__ == '__main__':
   parser.add_argument('speaker_name', help='Speaker label. Needs to be present in the Excel specification file.')
   parser.add_argument('results_directory', help='Will copy clips with the given speaker_name to this directory if finalize '
                       'is true in the specification_file.')
+  parser.add_argument('-seg', '--segment', required=False, help='Break the data up into SEGMENT minutes')
   args = parser.parse_args()
 
   input_diarization_directory = Path(args.input_diarization_directory)
@@ -263,5 +263,6 @@ if __name__ == '__main__':
     path.unlink()
 
   rename_from_spec_file(input_diarization_directory, speaker_name, specification_file, results_directory)
-  combine_wav(results_directory)
-  split_by_min(results_directory)
+  if args.segment:
+    combine_wav(results_directory)
+    split_by_min(results_directory, split_minutes=args.segment)

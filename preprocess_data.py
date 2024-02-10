@@ -21,8 +21,6 @@ def call_child_script(command):
     return [x for x in input_list if x is not None]
   subprocess.check_call(filter_out_none(command))
 
-
-
 if __name__ == '__main__':
   parser = argparse.ArgumentParser()
   
@@ -38,6 +36,8 @@ if __name__ == '__main__':
                       help='Excel file that specifies the speakers through a line.')
   parser.add_argument('-sl', '--speaker_label',required=False,
                       help='Speaker label. Needs to be present in the Excel specification file.')
+  parser.add_argument('-seg', '--segment', required=False, help='Break the output data up into SEGMENT minutes')
+
   
   # Command line arguments for format_audio_for_inference.py
   parser.add_argument('-b', '--break_up_by', default=0, type=int,
@@ -88,6 +88,7 @@ if __name__ == '__main__':
     args.specification_file,
     args.speaker_label,
     speaker_clip_output_path,
+    opt_add('-seg', args.segmentation)
   ]
 
   if args.redo_audio_formatting or (not format_audio_output_path.exists()):

@@ -1,5 +1,4 @@
 [ProtoPomp Website](https://protopomp.com)
-
 [ProtoPomp YouTube](https://youtube.com/@protopomp)
 
 # Automated RVC Data Processing
@@ -11,7 +10,7 @@ This is an opensource Python tool to automate RVC data preprocessing.
 
 ## Basic Instructions
 * Git clone this repository `git clone https://github.com/ProtoPompAI/Automated-RVC-Data-Preprocessing.git`
-* Create a Python 3.10 virtual environment i.e. `conda create -n Automated-RVC-Data python=3.10 && conda activate Automated-RVC-Data`
+* Create a Python 3.10 virtual environment i.e. `conda create -n Automated-RVC-Data python=3.10 -y` followed by `conda activate Automated-RVC-Data`
   * This repository was developed in WSL. If unresolvable issues occur in Windows, it is recommended to use WSL or Linux instead.
 * Install requirements within the new environment `pip install -r requirements.txt`
 * Run the program by opening a command window and running the program `python preprocess_data.py INPUT_AUDIO_DIRECTORY OUTPUT_LOCATION`
