@@ -17,6 +17,8 @@ This is an opensource Python tool to automate RVC data preprocessing.
   * i.e. `conda create -n Automated-RVC-Data python=3.10 -y` followed by `conda activate Automated-RVC-Data`
 * Install pytorch, torchaudio, and torchvision
   * i.e. `pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118` from [the pytorch website](https://pytorch.org/get-started/locally/)
+* Install cython
+  * `pip install cython`
 * Install the needed Python packages within the new environment `pip install -r requirements.txt`
 * Run the program by opening a command window and running the program `python preprocess_data.py INPUT_AUDIO_DIRECTORY OUTPUT_LOCATION`
   * The `INPUT_AUDIO_DIRECTORY` will be converted into workable audio with FFmpeg. Video files as well as audio files can be used as input into the program.
