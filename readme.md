@@ -1,4 +1,4 @@
-[ProtoPomp Website](https://protopomp.com)
+con[ProtoPomp Website](https://protopomp.com)
 [ProtoPomp YouTube](https://youtube.com/@protopomp)
 
 # Automated RVC Data Processing
@@ -8,11 +8,16 @@ This is an opensource Python tool to automate RVC data preprocessing.
 
 ## Primary Toolkits used
 
-## Basic Instructions
+## Installation Instructions
+* If you are using Windows, WSL must be used in order to run these scripts.
+  * This is due to the NeMo requirement of these scripts. NeMo does not work on Windows machines without WSL.
 * Git clone this repository `git clone https://github.com/ProtoPompAI/Automated-RVC-Data-Preprocessing.git`
-* Create a Python 3.10 virtual environment i.e. `conda create -n Automated-RVC-Data python=3.10 -y` followed by `conda activate Automated-RVC-Data`
-  * This repository was developed in WSL. If unresolvable issues occur in Windows, it is recommended to use WSL or Linux instead.
-* Install requirements within the new environment `pip install -r requirements.txt`
+* Install required packages for NeMo: `apt-get update && apt-get install -y libsndfile1 ffmpeg`
+* Create a Python 3.10 virtual environment 
+  * i.e. `conda create -n Automated-RVC-Data python=3.10 -y` followed by `conda activate Automated-RVC-Data`
+* Install pytorch, torchaudio, and torchvision
+  * i.e. `pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118` from [the pytorch website](https://pytorch.org/get-started/locally/)
+* Install the needed Python packages within the new environment `pip install -r requirements.txt`
 * Run the program by opening a command window and running the program `python preprocess_data.py INPUT_AUDIO_DIRECTORY OUTPUT_LOCATION`
   * The `INPUT_AUDIO_DIRECTORY` will be converted into workable audio with FFmpeg. Video files as well as audio files can be used as input into the program.
 * Use `python preprocess_data.py --help` to see the different ways to process raw input data.
