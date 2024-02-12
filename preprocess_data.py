@@ -14,7 +14,7 @@ def format_path(path_name):
   return str(path_name.absolute().as_posix())
     
 def format_script_name(file_name):
-  return format_path(Path(__file__).parent / file_name)
+  return format_path((Path(__file__).parent / 'helper_scripts') / file_name)
 
 def call_child_script(command):
   def filter_out_none(input_list):
