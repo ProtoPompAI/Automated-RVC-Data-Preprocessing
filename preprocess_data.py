@@ -36,16 +36,16 @@ if __name__ == '__main__':
                       help='Excel file that specifies the speakers through a line.')
   parser.add_argument('-sl', '--speaker_label',required=False,
                       help='Speaker label. Needs to be present in the Excel specification file.')
-  parser.add_argument('-seg', '--segment', required=False, help='Break the output data up into SEGMENT minutes')
+  parser.add_argument('-seg', '--segment', required=False, help='Break the output .wav files into SEGMENT minutes.')
 
   
   # Command line arguments for format_audio_for_inference.py
   parser.add_argument('-b', '--break_up_by', default=0, type=int,
-                      help='Break the audio up by X minutes. Output_file is converted to an output directory at the same location.')
+                      help='Break the input audio up by BREAK_UP_BY minutes.')
   parser.add_argument('-k', '--keep_audio_separated', action='store_true',
-                      help='If this option is set, processes audio without combing the outputs or breaking them apart.')
-  parser.add_argument('-st', '--start_time', required=False,help='Clip the file from start time.')
-  parser.add_argument('-et', '--end_time'  , required=False, help='Clip the file ending at end time.')
+                      help='If this option is set, processes the input audio without combining the input files.')
+  parser.add_argument('-st', '--start_time', required=False,help='Clip the input file from start time.')
+  parser.add_argument('-et', '--end_time'  , required=False, help='Clip the input file ending at end time.')
   parser.add_argument('-v', '--verbose', action='store_true',
                       help='Display full ffmpeg output on the command line.')
 
