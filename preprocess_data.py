@@ -88,7 +88,7 @@ if __name__ == '__main__':
     args.specification_file,
     args.speaker_label,
     speaker_clip_output_path,
-    opt_add('-seg', args.segmentation)
+    opt_add('-seg', args.segment)
   ]
 
   if args.redo_audio_formatting or (not format_audio_output_path.exists()):
