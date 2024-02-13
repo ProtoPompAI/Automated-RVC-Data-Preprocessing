@@ -13,11 +13,11 @@ This is an opensource Python tool to automate RVC data preprocessing.
   * This is due to the NeMo requirement of these scripts. NeMo does not work on Windows machines without WSL.
 * Git clone this repository `git clone https://github.com/ProtoPompAI/Automated-RVC-Data-Preprocessing.git`
 * Install required packages for NeMo: `apt-get update && apt-get install -y libsndfile1 ffmpeg`
-* Create a Python 3.10 virtual environment 
-  * i.e. `conda create -n Automated-RVC-Data python=3.10 -y` followed by `conda activate Automated-RVC-Data`
+* Create and activate a Python 3.10 virtual environment 
+  * i.e. `conda create -n rvc python=3.10 -y` followed by `conda activate rvc`
 * Install pytorch, torchaudio, and torchvision
   * i.e. `pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118` from [the pytorch website](https://pytorch.org/get-started/locally/)
-* Install cython
+* Install cython. Needed for NeMo install.
   * `pip install cython`
 * Install the needed Python packages within the new environment `pip install -r requirements.txt`
 * Run the program by opening a command window and running the program `python preprocess_data.py INPUT_AUDIO_DIRECTORY OUTPUT_LOCATION`
