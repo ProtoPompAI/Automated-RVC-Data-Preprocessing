@@ -6,7 +6,6 @@ con[ProtoPomp Website](https://protopomp.com)
 
 This is an opensource Python tool to automate RVC data preprocessing.
 
-## Primary Toolkits used
 
 ## Installation Instructions
 * If you are using Windows, WSL must be used in order to run these scripts.
